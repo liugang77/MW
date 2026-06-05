@@ -1,0 +1,56 @@
+name: Bug 报告
+description: 报告一个缺陷，帮助我们改进
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量完整填写以下信息，方便我们复现与定位问题。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 清晰简洁地描述发生了什么。
+      placeholder: 点击「外汇买卖」保存后，持仓金额计算错误……
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 一步步说明如何复现该问题。
+      placeholder: |
+        1. 进入「外汇账户」
+        2. 点击「外汇买卖」
+        3. 填写卖出 1000 CNY 买入 USD
+        4. 保存后查看持仓
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      description: 你期望看到的正确行为是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 操作系统、Python 版本、Node 版本、浏览器等。
+      placeholder: |
+        - OS: Windows 11
+        - Python: 3.11
+        - Node: 20.x
+        - 浏览器: Chrome 125
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: 如有相关的后端报错日志或前端控制台报错、界面截图，请粘贴于此。
+      render: shell
+    validations:
+      required: false

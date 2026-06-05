@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 讨论与提问
+    url: https://github.com/
+    about: 一般性的使用问题与讨论，请在仓库 Discussions 中发起（如已开启）。
