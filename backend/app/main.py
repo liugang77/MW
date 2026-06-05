@@ -173,7 +173,7 @@ def health():
 
 
 # ---------- 托管前端打包产物（单进程模式） ----------
-DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
