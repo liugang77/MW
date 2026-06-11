@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useLedgerStore } from '../stores/ledger'
@@ -348,27 +348,88 @@ async function submitTransfer() {
 const exchangeVisible = ref(false)
 const ex = ref({
   fromId: null as number | null,
-  fromAmount: 0,
+  fromAmount: null as number | null,
   toId: null as number | null,
-  toAmount: 0,
+  toAmount: null as number | null,
+  rate: '' as string,       // 可编辑汇率：1 卖出 ≈ N 买入
   fee: 0,
   feeAccountId: null as number | null,
   occurredAt: today(),
   remark: ''
 })
+// 识别最近由哪个字段触发了更新，避免循环
+let _exSource: 'from' | 'to' | 'rate' | '' = ''
 
 function openExchange() {
   ex.value = {
-    fromId: props.account?.id ?? null, fromAmount: 0, toId: null, toAmount: 0,
-    fee: 0, feeAccountId: null, occurredAt: today(), remark: ''
+    fromId: props.account?.id ?? null, fromAmount: null, toId: null, toAmount: null,
+    rate: '', fee: 0, feeAccountId: null, occurredAt: today(), remark: ''
   }
+  _exSource = ''
   exchangeVisible.value = true
 }
 
-const exRate = computed(() => {
-  const f = toNum(ex.value.fromAmount)
-  const t = toNum(ex.value.toAmount)
-  return f > 0 && t > 0 ? (t / f).toFixed(4) : '-'
+// 切换账户时自动加载汇率
+async function loadExRate() {
+  const lid = ledgerStore.currentId
+  if (!lid) return
+  const fromAcc = props.accounts.find((a) => a.id === ex.value.fromId)
+  const toAcc = props.accounts.find((a) => a.id === ex.value.toId)
+  if (!fromAcc || !toAcc || fromAcc.currency === toAcc.currency) return
+  // 优先用 from 货币对 to 的汇率；如没有就用反向倒数
+  try {
+    const rates = await api.listExchangeRates(lid, { currency_code: toAcc.currency })
+    const r = rates.find((x) => x.base_code === fromAcc.currency || x.currency_code === toAcc.currency)
+    if (r) {
+      const rateNum = r.base_code === fromAcc.currency
+        ? Number(r.rate)
+        : (Number(r.rate) > 0 ? 1 / Number(r.rate) : 0)
+      ex.value.rate = rateNum > 0 ? rateNum.toFixed(4) : ''
+    } else {
+      // 尝试反向查
+      const rates2 = await api.listExchangeRates(lid, { currency_code: fromAcc.currency })
+      const r2 = rates2.find((x) => x.currency_code === fromAcc.currency)
+      if (r2 && Number(r2.rate) > 0) ex.value.rate = (1 / Number(r2.rate)).toFixed(4)
+    }
+  } catch { /* 必要时可手动输入 */ }
+}
+
+watch(() => [ex.value.fromId, ex.value.toId], () => {
+  if (exchangeVisible.value) loadExRate()
+})
+
+// 卖出金额变化 → 根据汇率推算买入
+watch(() => ex.value.fromAmount, (v) => {
+  if (_exSource && _exSource !== 'from') return
+  _exSource = 'from'
+  const rate = Number(ex.value.rate)
+  if (rate > 0 && v != null && v > 0) {
+    ex.value.toAmount = parseFloat((v * rate).toFixed(2))
+  }
+  _exSource = ''
+})
+
+// 买入金额变化 → 根据卖出金额推算汇率（仅更新展示汇率，不能触发卥瓢）
+watch(() => ex.value.toAmount, (v) => {
+  if (_exSource && _exSource !== 'to') return
+  _exSource = 'to'
+  const from = ex.value.fromAmount
+  if (from != null && from > 0 && v != null && v > 0) {
+    ex.value.rate = (v / from).toFixed(4)
+  }
+  _exSource = ''
+})
+
+// 汇率变化 → 以卖出金额为准推算买入
+watch(() => ex.value.rate, (v) => {
+  if (_exSource && _exSource !== 'rate') return
+  _exSource = 'rate'
+  const rate = Number(v)
+  const from = ex.value.fromAmount
+  if (rate > 0 && from != null && from > 0) {
+    ex.value.toAmount = parseFloat((from * rate).toFixed(2))
+  }
+  _exSource = ''
 })
 
 async function submitExchange() {
@@ -376,7 +437,7 @@ async function submitExchange() {
   if (!lid) return
   if (!ex.value.fromId || !ex.value.toId) return ElMessage.warning('请选择卖出与买入账户')
   if (ex.value.fromId === ex.value.toId) return ElMessage.warning('卖出与买入账户不能相同')
-  if (toNum(ex.value.fromAmount) <= 0 || toNum(ex.value.toAmount) <= 0)
+  if ((ex.value.fromAmount ?? 0) <= 0 || (ex.value.toAmount ?? 0) <= 0)
     return ElMessage.warning('请输入兑换金额')
   try {
     await api.exchangeTransaction(lid, {
@@ -602,7 +663,7 @@ defineExpose({ openSplitEdit })
     </el-dialog>
 
     <!-- 货币兑换 -->
-    <el-dialog v-model="exchangeVisible" title="货币兑换" width="460px" append-to-body>
+    <el-dialog v-model="exchangeVisible" title="货币兑换" width="600px" append-to-body>
       <el-form label-width="92px">
         <el-form-item label="卖出账户">
           <el-select v-model="ex.fromId" filterable placeholder="选择卖出账户" style="width: 100%">
@@ -610,7 +671,18 @@ defineExpose({ openSplitEdit })
           </el-select>
         </el-form-item>
         <el-form-item label="卖出金额">
-          <el-input-number v-model="ex.fromAmount" :min="0" :precision="2" :controls="false" style="width: 100%" />
+          <el-input-number v-model="ex.fromAmount" :min="0" :precision="2" :controls="false" style="width: 100%" placeholder="请输入卖出金额" />
+        </el-form-item>
+        <el-form-item label="兑换汇率">
+          <el-input
+            v-model="ex.rate"
+            type="number"
+            placeholder="1 卖出 ≈ ? 买入"
+            style="width: 100%"
+          >
+            <template #prefix><span style="color:#909399;white-space:nowrap">1 卖出 ≈</span></template>
+            <template #suffix><span style="color:#909399">买入</span></template>
+          </el-input>
         </el-form-item>
         <el-form-item label="买入账户">
           <el-select v-model="ex.toId" filterable placeholder="选择买入账户" style="width: 100%">
@@ -618,10 +690,7 @@ defineExpose({ openSplitEdit })
           </el-select>
         </el-form-item>
         <el-form-item label="买入金额">
-          <el-input-number v-model="ex.toAmount" :min="0" :precision="2" :controls="false" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="兑换汇率">
-          <span style="color: #909399">1 卖出 ≈ {{ exRate }} 买入</span>
+          <el-input-number v-model="ex.toAmount" :min="0" :precision="2" :controls="false" style="width: 100%" placeholder="请输入买入金额" />
         </el-form-item>
         <el-form-item label="手续费">
           <el-input-number v-model="ex.fee" :min="0" :precision="2" :controls="false" style="width: 100%" />

@@ -9,6 +9,7 @@ import VChart from 'vue-echarts'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useLedgerStore } from '../stores/ledger'
+import { useMediaQuery } from '../composables/useMediaQuery'
 import type { Overview, NetWorth, TrendItem, CategoryStat, Account, Loan, InvestmentOverview, Budget } from '../types'
 
 use([CanvasRenderer, PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent])
@@ -16,6 +17,7 @@ use([CanvasRenderer, PieChart, BarChart, TooltipComponent, LegendComponent, Grid
 const PIE_COLORS = ['#d9534f', '#e6a23c', '#2e9c4f', '#409eff', '#9b59b6', '#5fb878', '#e8746f', '#f0a59f', '#7ec1d6', '#c0a16b']
 
 const ledgerStore = useLedgerStore()
+const { isMobile } = useMediaQuery()
 
 const month = ref<string>(dayjs().format('YYYY-MM'))
 const overview = ref<Overview>({ income: '0', expense: '0', balance: '0' })
@@ -51,13 +53,24 @@ const payables = computed(() => loans.value.filter((l) => !l.is_closed && l.dire
 
 /* ---- 图表配置 ---- */
 function pie(title: string, data: { name: string; value: number }[]) {
+  const mobile = isMobile.value
   return {
     color: PIE_COLORS,
-    title: { text: title, left: '37%', top: '46%', textAlign: 'center', textStyle: { fontSize: 14, color: '#606266' } },
+    title: {
+      text: title,
+      left: mobile ? 'center' : '37%',
+      top: mobile ? '38%' : '46%',
+      textAlign: 'center',
+      textStyle: { fontSize: mobile ? 13 : 14, color: '#606266' }
+    },
     tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-    legend: { type: 'scroll', orient: 'vertical', right: 8, top: 'middle', textStyle: { fontSize: 11 } },
+    legend: mobile
+      ? { type: 'scroll', orient: 'horizontal', bottom: 0, left: 'center', textStyle: { fontSize: 11 } }
+      : { type: 'scroll', orient: 'vertical', right: 8, top: 'middle', textStyle: { fontSize: 11 } },
     series: [{
-      type: 'pie', radius: ['46%', '68%'], center: ['38%', '50%'],
+      type: 'pie',
+      radius: mobile ? ['40%', '60%'] : ['46%', '68%'],
+      center: mobile ? ['50%', '42%'] : ['38%', '50%'],
       avoidLabelOverlap: true, label: { show: false },
       data
     }]
@@ -70,7 +83,7 @@ const trendOption = computed(() => {
     color: ['#2e9c4f', '#d9534f'],
     tooltip: { trigger: 'axis' },
     legend: { data: ['收入', '支出'], top: 4 },
-    grid: { left: 60, right: 20, top: 40, bottom: 30 },
+    grid: { left: isMobile.value ? 44 : 60, right: isMobile.value ? 12 : 20, top: 40, bottom: 30 },
     xAxis: { type: 'category', data: rows.map((r) => r.period) },
     yAxis: { type: 'value' },
     series: [
@@ -155,7 +168,7 @@ watch(month, load)
 
     <!-- 图表区（左侧分类标签） -->
     <el-card shadow="never" class="chart-card">
-      <el-tabs v-model="activeTab" tab-position="left" class="chart-tabs">
+      <el-tabs v-model="activeTab" :tab-position="isMobile ? 'top' : 'left'" class="chart-tabs">
         <el-tab-pane label="收支对比" name="trend">
           <v-chart v-if="trendRows.length" :option="trendOption" autoresize class="chart" />
           <el-empty v-else description="暂无收支数据" :image-size="60" />
@@ -297,6 +310,29 @@ watch(month, load)
 .block-header .muted { color: #909399; font-weight: 400; font-size: 13px; }
 .block-header .link { text-decoration: none; }
 .muted .expense { font-weight: 600; }
+
+/* ---------- 响应式：iPad ---------- */
+@media (max-width: 1024px) and (min-width: 769px) {
+  .chart-tabs :deep(.el-tabs__content) { height: 300px; }
+  .chart { height: 300px; }
+  .debt-pair, .debt-pair .half { height: 300px; }
+}
+
+/* ---------- 响应式：手机 ---------- */
+@media (max-width: 768px) {
+  .summary-flex { gap: 14px 18px; }
+  .stat .val { font-size: 18px; }
+  .stat.right { text-align: left; }
+  .summary-flex .spacer { flex-basis: 100%; height: 0; }
+
+  /* 顶部 Tab 横向滚动，图表高度收紧 */
+  .chart-tabs :deep(.el-tabs__content) { height: auto; min-height: 300px; }
+  .chart { height: 300px; }
+
+  /* 债权/债务双图改为上下堆叠 */
+  .debt-pair { flex-direction: column; height: auto; }
+  .debt-pair .half { height: 220px; }
+}
 
 .income { color: #2e9c4f; }
 .expense { color: #d9534f; }

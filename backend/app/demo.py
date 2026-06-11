@@ -130,11 +130,26 @@ def _build_common_settings(ledger_id: int) -> None:
         wm2 = _wm("小银票23705", start_days=38, term_days=33, rate="6.00")
         wm3 = _wm("小银票24013", start_days=36, term_days=76, rate="6.18")
         wm4 = _wm("新手理财12期", start_days=33, term_days=30, rate="15.00", guaranteed=True, issuer="工商银行")
+        # 外币理财产品（USD）
+        wm_usd1 = models.Instrument(
+            ledger_id=ledger_id, category="bank_wealth", name="美元增值12M", currency="USD",
+            issuer="工商银行", expected_rate=Decimal("4.80"), term_value=12, term_unit="month",
+            start_date=(datetime.now() - timedelta(days=62)).strftime("%Y-%m-%d"),
+            end_date=(datetime.now() + timedelta(days=305)).strftime("%Y-%m-%d"),
+            guaranteed=False,
+        )
+        wm_usd2 = models.Instrument(
+            ledger_id=ledger_id, category="bank_wealth", name="富达美债6M", currency="USD",
+            issuer="招商银行", expected_rate=Decimal("5.20"), term_value=6, term_unit="month",
+            start_date=(datetime.now() - timedelta(days=37)).strftime("%Y-%m-%d"),
+            end_date=(datetime.now() + timedelta(days=146)).strftime("%Y-%m-%d"),
+            guaranteed=False,
+        )
         # 贵金属品种（上海黄金交易所 SGE，无代码，以名称管理）
         au = models.Instrument(ledger_id=ledger_id, category="metal", name="Au99.99", currency="CNY")
         autd = models.Instrument(ledger_id=ledger_id, category="metal", name="Au(T+D)", currency="CNY")
         agtd = models.Instrument(ledger_id=ledger_id, category="metal", name="Ag(T+D)", currency="CNY")
-        s.add_all([gzmt, etf, mmf, wm, wm1, wm2, wm3, wm4, au, autd, agtd])
+        s.add_all([gzmt, etf, mmf, wm, wm1, wm2, wm3, wm4, wm_usd1, wm_usd2, au, autd, agtd])
         s.commit()
 
         # 价格 / 净值
@@ -365,6 +380,31 @@ def _build_home_ledger(ledger_id: int, cats: dict, instruments: dict) -> None:
                       occurred_at=_months_ago(1, 9), remark="外汇买卖：卖出9200CNY 买入10000HKD",
                       trade_symbol="CNY/HKD", trade_price=Decimal("0.92"), trade_qty=Decimal("10000"))
 
+        # 外币理财申购（从外汇账户 USD 持仓扣款，成本以申购时汇率折算为 CNY）
+        # 申购1：汇率6.90（低于现汇7.18），到期后人民币市值升值
+        add_txn(type="expense", amount=Decimal("2000"), currency="USD",
+                account_id=forex_acc.id, to_account_id=wealth_acc.id,
+                occurred_at=_months_ago(2, 10), remark="银行理财产品申购：美元增值12M 2000USD",
+                trade_symbol="美元增值12M", trade_price=Decimal("1"), trade_qty=Decimal("2000"),
+                trade_commission=Decimal("0"), trade_fee=Decimal("0"), trade_cost=Decimal("13800"),
+                trade_exchange_rate=Decimal("6.9000"))
+        # 申购2：汇率7.50（高于现汇7.18），到期后人民币市值有汇率损失
+        add_txn(type="expense", amount=Decimal("1000"), currency="USD",
+                account_id=forex_acc.id, to_account_id=wealth_acc.id,
+                occurred_at=_months_ago(1, 5), remark="银行理财产品申购：富达美债6M 1000USD",
+                trade_symbol="富达美债6M", trade_price=Decimal("1"), trade_qty=Decimal("1000"),
+                trade_commission=Decimal("0"), trade_fee=Decimal("0"), trade_cost=Decimal("7500"),
+                trade_exchange_rate=Decimal("7.5000"))
+
+        # 演示外币理财赎回（模拟一笔「美元增值12M」500USD原币退回外汇账户，剩余1500仍持有）
+        # 注：持仓中仍显示2000USD（持仓由上方 Holding 直接建立，此流水仅供交易记录展示）
+        add_txn(type="income", amount=Decimal("500"), currency="USD",
+                account_id=forex_acc.id, to_account_id=wealth_acc.id,
+                occurred_at=_months_ago(0, 3), remark="银行理财产品赎回：美元增值12M 500USD",
+                trade_symbol="美元增值12M", trade_price=Decimal("1"), trade_qty=Decimal("500"),
+                trade_commission=Decimal("0"), trade_fee=Decimal("0"), trade_cost=Decimal("3450"),
+                trade_exchange_rate=Decimal("6.9000"))
+
         # 网贷借出：从网贷账户可用现金支出本金（债权另计为应收资产）
         lend_t1 = add_txn(type="expense", amount=Decimal("20000"), account_id=p2p_acc.id,
                 occurred_at=_months_ago(3, 5), remark="网贷借出：新手标12月")
@@ -479,16 +519,36 @@ def _build_home_ledger(ledger_id: int, cats: dict, instruments: dict) -> None:
                            type="wealth", quantity=Decimal("20000"), cost=Decimal("20000"), price=Decimal("1.0000")),
             models.Holding(ledger_id=ledger_id, account_id=wealth_acc.id, symbol="新手理财12期", name="新手理财12期",
                            type="wealth", quantity=Decimal("15000"), cost=Decimal("15000"), price=Decimal("1.0000")),
+            # 外币理财示例1：用2000美元申购「美元增值12M」，当时汇率6.90（低于现汇）→ CNY成本13800
+            # 现汇7.18，当前人民币市值=2000×7.18=14360，浮盈=560（汇率升值获益）
+            models.Holding(ledger_id=ledger_id, account_id=wealth_acc.id,
+                           symbol="美元增值12M", name="美元增值12M",
+                           type="wealth", currency="USD",
+                           quantity=Decimal("2000"),     # 申购金额 USD
+                           cost=Decimal("13800"),        # 申购时 CNY 成本（2000×6.90）
+                           price=Decimal("6.9000")),     # 申购时汇率（便于追溯）
+            # 外币理财示例2：用1000美元申购「富达美债6M」，当时汇率7.50（高于现汇）→ CNY成本7500
+            # 现汇7.18，当前人民币市值=1000×7.18=7180，浮亏=-320（汇率贬值损失）
+            models.Holding(ledger_id=ledger_id, account_id=wealth_acc.id,
+                           symbol="富达美债6M", name="富达美债6M",
+                           type="wealth", currency="USD",
+                           quantity=Decimal("1000"),     # 申购金额 USD
+                           cost=Decimal("7500"),         # 申购时 CNY 成本（1000×7.50）
+                           price=Decimal("7.5000")),     # 申购时汇率
             # 贵金属持仓：买入价 560、现价 600（浮盈 800）
             models.Holding(ledger_id=ledger_id, account_id=metal_acc.id, symbol="Au99.99", name="Au99.99",
                            type="metal", quantity=Decimal("20"), cost=Decimal("11200"), price=Decimal("600.00")),
-            # 外汇持仓：人民币结余 4900 + 美元 5000（折合 35900）+ 港币 10000（折合 9200）
+        ])
+
+        # 外汇持仓：人民币结余 4900 + 美元 2000（申购理财后剩余）+ 港币 10000
+        # 注：美元持仓中有3000 USD 用于外币理财申购（见上方理财持仓），外汇账户剩余 2000 USD
+        db.add_all([
             models.Holding(ledger_id=ledger_id, account_id=forex_acc.id, symbol="CNY", name="人民币",
-                           type="forex", quantity=Decimal("4900"), cost=Decimal("4900"), price=Decimal("1.0000")),
+                           type="forex", currency="CNY", quantity=Decimal("4900"), cost=Decimal("4900"), price=Decimal("1.0000")),
             models.Holding(ledger_id=ledger_id, account_id=forex_acc.id, symbol="USD", name="美元",
-                           type="forex", quantity=Decimal("5000"), cost=Decimal("35900"), price=Decimal("7.1800")),
+                           type="forex", currency="USD", quantity=Decimal("2000"), cost=Decimal("14360"), price=Decimal("7.1800")),
             models.Holding(ledger_id=ledger_id, account_id=forex_acc.id, symbol="HKD", name="港币",
-                           type="forex", quantity=Decimal("10000"), cost=Decimal("9200"), price=Decimal("0.9200")),
+                           type="forex", currency="HKD", quantity=Decimal("10000"), cost=Decimal("9200"), price=Decimal("0.9200")),
         ])
 
         # 借贷（债权债务）

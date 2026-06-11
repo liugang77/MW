@@ -12,6 +12,20 @@ from app.services.balance import apply_transaction
 router = APIRouter(tags=["trades"])
 
 
+def _adjust_forex_holding(db: Session, ledger_id: int, account_id: int,
+                          currency: str, qty_delta: Decimal) -> None:
+    """外汇账户某币种持仓增减（qty_delta 为负则减少）。不需要全量重算，直接增量修改。"""
+    h = (db.query(models.Holding)
+         .filter(models.Holding.account_id == account_id,
+                 models.Holding.type == "forex",
+                 models.Holding.symbol == currency)
+         .first())
+    if h is None:
+        return  # 持仓不存在时不操作
+    h.quantity = Decimal(h.quantity) + qty_delta
+    h.cost = (Decimal(h.cost) + qty_delta * Decimal(h.price)).quantize(Decimal("0.01"))
+
+
 def _attach_tags(db: Session, txn: models.Transaction, tag_ids: list[int]) -> None:
     if not tag_ids:
         return
@@ -62,6 +76,17 @@ def _reverse_trade_txn(db: Session, txn: models.Transaction) -> None:
                 )
                 db.add(holding)
     apply_transaction(db, txn, sign=-1)
+    # 如果当时是从外汇账户扭出（外币申购），回滚时应还原外币持仓
+    if txn.currency and txn.currency != "CNY" and txn.trade_exchange_rate:
+        cash_acc = db.get(models.Account, txn.account_id)
+        if cash_acc and cash_acc.type == "forex":
+            qty_back = Decimal(txn.trade_qty or 0)
+            if txn.type == "expense" and qty_back > 0:
+                # 买入（申购）回滚：还原外币持仓
+                _adjust_forex_holding(db, txn.ledger_id, txn.account_id, txn.currency, qty_back)
+            elif txn.type == "income" and qty_back > 0:
+                # 赎回原币退回到外汇账户，回滚时扣减
+                _adjust_forex_holding(db, txn.ledger_id, txn.account_id, txn.currency, -qty_back)
     db.delete(txn)
     db.flush()
 
@@ -89,34 +114,47 @@ def trade_buy(ledger_id: int, payload: schemas.TradeBuy, db: Session = Depends(g
     total = Decimal(payload.amount_total) if payload.amount_total is not None else gross + fee
     occurred = payload.occurred_at or datetime.now()
     name = payload.name or payload.symbol
+    currency = payload.currency or "CNY"
+    exchange_rate = Decimal(payload.exchange_rate) if payload.exchange_rate else Decimal("1")
+    # 持仓成本统一折算为人民币：外币申购以汇率换算，便于日后比较人民币价值（含收益+汇率两因素）
+    cny_cost = (total * exchange_rate).quantize(Decimal("0.01")) if currency != "CNY" else total
 
     # 资金账户支出（含费用）——现金转为持仓
     pay = models.Transaction(
         ledger_id=ledger_id, type="expense", amount=total,
+        currency=currency,
         account_id=payload.cash_account_id, occurred_at=occurred,
         to_account_id=(payload.security_account_id
                        if payload.security_account_id != payload.cash_account_id else None),
         remark=payload.remark or f"买入：{name} {payload.quantity}股",
         trade_price=Decimal(payload.price), trade_qty=Decimal(payload.quantity),
         trade_commission=Decimal(payload.commission or 0), trade_fee=fee,
-        trade_cost=total, trade_symbol=payload.symbol,
+        trade_cost=cny_cost, trade_symbol=payload.symbol,
+        trade_exchange_rate=exchange_rate if currency != "CNY" else None,
     )
     db.add(pay)
     db.flush()
     _attach_tags(db, pay, payload.tag_ids)
     apply_transaction(db, pay, sign=1)
+    # 如果资金账户是外汇账户，将对应外币持仓减少（外汇账户为汇总账，不通过 apply_transaction 改变币种持仓）
+    cash_acc = db.get(models.Account, payload.cash_account_id)
+    if cash_acc and cash_acc.type == "forex" and currency != "CNY":
+        _adjust_forex_holding(db, ledger_id, payload.cash_account_id, currency, -Decimal(payload.quantity))
 
-    # 更新/创建持仓
+    # 更新/创建持仓（cost 始终以人民币记，price 为外币时记录申购汇率）
     holding = _find_holding(db, ledger_id, payload.security_account_id, payload.symbol)
     if holding:
         holding.quantity = Decimal(holding.quantity) + Decimal(payload.quantity)
-        holding.cost = Decimal(holding.cost) + total
+        holding.cost = Decimal(holding.cost) + cny_cost
         holding.price = Decimal(payload.price)
+        if currency != "CNY":
+            holding.currency = currency
     else:
         holding = models.Holding(
             ledger_id=ledger_id, account_id=payload.security_account_id,
             symbol=payload.symbol, name=name, type=payload.sec_type,
-            quantity=Decimal(payload.quantity), cost=total, price=Decimal(payload.price),
+            quantity=Decimal(payload.quantity), cost=cny_cost, price=Decimal(payload.price),
+            currency=currency,
         )
         db.add(holding)
     db.flush()
@@ -150,25 +188,50 @@ def trade_sell(ledger_id: int, payload: schemas.TradeSell, db: Session = Depends
     net = gross - fee  # 实际到账
     occurred = payload.occurred_at or datetime.now()
     name = holding.name
+    hold_currency = getattr(holding, "currency", None) or "CNY"
 
-    # 按比例结转成本
+    # 外币理财赎回：回款金额和币种处理
+    if hold_currency != "CNY":
+        exchange_rate = Decimal(payload.exchange_rate) if payload.exchange_rate else None
+        if payload.redeem_to_cny and exchange_rate:
+            # 兑换为人民币：回款金额 = 外币金额 × 汇率
+            recv_amount = (net * exchange_rate).quantize(Decimal("0.01"))
+            recv_currency = "CNY"
+        else:
+            # 原币退回
+            recv_amount = net
+            recv_currency = hold_currency
+    else:
+        recv_amount = net
+        recv_currency = "CNY"
+        exchange_rate = None
+
+    # 按比例结转成本（始终为 CNY）
     cost_removed = (Decimal(holding.cost) * sell_qty / held).quantize(Decimal("0.01")) if held else Decimal("0")
 
     # 资金账户收入（净额）——持仓转为现金
     recv = models.Transaction(
-        ledger_id=ledger_id, type="income", amount=net,
+        ledger_id=ledger_id, type="income", amount=recv_amount,
+        currency=recv_currency,
         account_id=payload.cash_account_id, occurred_at=occurred,
         to_account_id=(payload.security_account_id
                        if payload.security_account_id != payload.cash_account_id else None),
-        remark=payload.remark or f"卖出：{name} {sell_qty}股",
+        remark=payload.remark or f"理财赎回：{name}",
         trade_price=Decimal(payload.price), trade_qty=sell_qty,
         trade_commission=Decimal(payload.commission or 0), trade_fee=fee,
         trade_cost=cost_removed, trade_symbol=payload.symbol,
+        trade_exchange_rate=exchange_rate if hold_currency != "CNY" else None,
     )
     db.add(recv)
     db.flush()
     _attach_tags(db, recv, payload.tag_ids)
     apply_transaction(db, recv, sign=1)
+
+    # 外币原币退回到外汇账户：增加对应外币持仓
+    if hold_currency != "CNY" and not payload.redeem_to_cny:
+        cash_acc = db.get(models.Account, payload.cash_account_id)
+        if cash_acc and cash_acc.type == "forex":
+            _adjust_forex_holding(db, ledger_id, payload.cash_account_id, hold_currency, net)
 
     # 更新持仓
     holding.quantity = held - sell_qty

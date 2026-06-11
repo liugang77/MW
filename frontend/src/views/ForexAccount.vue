@@ -114,6 +114,31 @@ const records = computed<FxRecord[]>(() => {
         remark: t.remark || '',
         txn: t,
       })
+    } else if (t.type === 'expense' && t.account_id === fid && t.currency && t.currency !== 'CNY') {
+      // 外币理财申购：从外汇账户扣除外币，流水 currency=外币
+      const rate = t.trade_exchange_rate ? `汇率 ${Number(t.trade_exchange_rate).toFixed(4)}` : ''
+      list.push({
+        id: t.id,
+        kind: 'trade',
+        date: fmtDate(t.occurred_at),
+        biz: '理财申购',
+        detail: `${t.trade_symbol || ''} ${fmt(t.amount)} ${t.currency}${rate ? ' · ' + rate : ''}`,
+        amountText: `-${fmt(t.amount)} ${t.currency}`,
+        remark: t.remark || '',
+        txn: t,
+      })
+    } else if (t.type === 'income' && t.account_id === fid && t.currency && t.currency !== 'CNY') {
+      // 外币理财赎回：资金回到外汇账户
+      list.push({
+        id: t.id,
+        kind: 'transfer',
+        date: fmtDate(t.occurred_at),
+        biz: '理财赎回',
+        detail: `${t.trade_symbol || ''} ${fmt(t.amount)} ${t.currency}`,
+        amountText: `+${fmt(t.amount)} ${t.currency}`,
+        remark: t.remark || '',
+        txn: t,
+      })
     }
   }
   return list

@@ -274,6 +274,7 @@ class TransactionOut(TransactionBase):
     trade_fee: Decimal | None = None
     trade_cost: Decimal | None = None
     trade_symbol: str | None = None
+    trade_exchange_rate: Decimal | None = None
     loan_id: int | None = None
     collect_group: str | None = None
     ipo_status: str | None = None
@@ -535,6 +536,7 @@ class HoldingBase(BaseModel):
     symbol: str | None = None
     name: str
     type: str = "stock"
+    currency: str = "CNY"
     quantity: Decimal = Decimal("0")
     cost: Decimal = Decimal("0")
     price: Decimal = Decimal("0")
@@ -582,10 +584,13 @@ class TradeBuy(BaseModel):
     remark: str | None = None
     tag_ids: list[int] = []
     edit_txn_id: int | None = None        # 编辑模式：先回滚并删除该笔后重建
+    currency: str | None = None           # 理财专用：申购币种
+    exchange_rate: Decimal | None = None  # 理财专用：汇率（CNY->currency）
 
 
 class TradeSell(TradeBuy):
     pnl_as: str = "invest_income"     # 本次盈亏记为
+    redeem_to_cny: bool = False       # 外币理财赎回：是否兑换为人民币
 
 
 # ---------- 新股申购 / 中签确认 ----------

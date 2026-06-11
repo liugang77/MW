@@ -208,6 +208,7 @@ export interface Transaction {
   trade_fee?: string | null
   trade_cost?: string | null
   trade_symbol?: string | null
+  trade_exchange_rate?: string | null
   loan_id?: number | null
   collect_group?: string | null
   insurance_activity?: string | null
@@ -309,6 +310,7 @@ export interface Holding {
   symbol?: string | null
   name: string
   type: string
+  currency?: string
   quantity: string
   cost: string
   price: string

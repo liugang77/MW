@@ -101,6 +101,7 @@ def _ensure_columns() -> None:
             "trade_fee": "NUMERIC(15, 2)",
             "trade_cost": "NUMERIC(18, 2)",
             "trade_symbol": "VARCHAR(32)",
+            "trade_exchange_rate": "NUMERIC(10, 4)",
             "loan_id": "INTEGER",
             "collect_group": "VARCHAR(32)",
             "insurance_activity": "VARCHAR(16)",

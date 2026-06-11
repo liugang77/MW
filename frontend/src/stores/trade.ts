@@ -13,6 +13,8 @@ export interface TradeEditTxn {
   occurred_at: string | null
   remark: string | null
   tag_ids?: number[]
+  currency?: string | null        // 理财外币申购：币种
+  exchange_rate?: number | null   // 理财外币申购：申购时汇率
 }
 
 interface TradeState {

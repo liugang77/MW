@@ -256,6 +256,8 @@ function onEditTxn(row: Transaction) {
     occurred_at: row.occurred_at,
     remark: row.remark ?? null,
     tag_ids: row.tag_ids ? [...row.tag_ids] : [],
+    currency: row.currency || null,
+    exchange_rate: row.trade_exchange_rate != null ? Number(row.trade_exchange_rate) : null,
   })
 }
 async function onDeleteTxn(row: Transaction) {

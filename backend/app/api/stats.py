@@ -169,8 +169,25 @@ def trend(
 
 @router.get("/ledgers/{ledger_id}/stats/investment", response_model=schemas.InvestmentOverview)
 def investment_overview(ledger_id: int, db: Session = Depends(get_db)):
-    """投资一览：买入均价、持仓成本、持仓市值、浮动盈亏、涨幅%。"""
+    """投资一览：买入均价、持仓成本、持仓市值、浮动盈亏、涨幅%。
+    
+    外币持仓（currency != CNY）：market_value 用最新汇率折算为人民币，
+    便于体现「收益 + 汇率变化」两个因素对人民币价值的综合影响。
+    """
     rows = db.query(models.Holding).filter(models.Holding.ledger_id == ledger_id).all()
+
+    # 加载最新汇率（取每种货币最新一条记录）
+    rate_rows = (
+        db.query(models.ExchangeRate)
+        .filter(models.ExchangeRate.ledger_id == ledger_id)
+        .order_by(models.ExchangeRate.rate_date.desc())
+        .all()
+    )
+    latest_rates: dict[str, Decimal] = {}
+    for r in rate_rows:
+        if r.currency_code not in latest_rates:
+            latest_rates[r.currency_code] = Decimal(r.rate)
+
     out_rows = []
     total_cost = Decimal("0")
     total_mv = Decimal("0")
@@ -178,7 +195,14 @@ def investment_overview(ledger_id: int, db: Session = Depends(get_db)):
         qty = Decimal(h.quantity)
         cost = Decimal(h.cost)
         price = Decimal(h.price)
-        mv = qty * price
+        hcurrency = getattr(h, "currency", None) or "CNY"
+        # 外币持仓：market_value = 持仓数量 × 最新汇率（单位：人民币）
+        # price 列对于外币理财存储的是申购时汇率，以最新汇率覆盖市值计算
+        if hcurrency != "CNY" and hcurrency in latest_rates:
+            current_rate = latest_rates[hcurrency]
+            mv = (qty * current_rate).quantize(Decimal("0.01"))
+        else:
+            mv = qty * price
         avg_cost = (cost / qty) if qty else Decimal("0")
         float_profit = mv - cost
         change = float(round(float_profit / cost * 100, 2)) if cost else 0.0

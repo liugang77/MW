@@ -90,7 +90,7 @@ watch(range, load)
     <template v-else>
       <!-- 柱状图：各账户盈亏 -->
       <el-card shadow="never" class="chart-card">
-        <v-chart :option="barOption" style="height: 280px" autoresize />
+        <v-chart :option="barOption" class="rpt-chart" autoresize />
       </el-card>
 
       <!-- 收益表：按账户分组 -->
@@ -183,6 +183,8 @@ watch(range, load)
   padding: 8px 12px;
 }
 
+.rpt-chart { height: 280px; width: 100%; }
+
 .rpt-table {
   width: 100%;
   border-collapse: collapse;
@@ -244,5 +246,19 @@ watch(range, load)
 
 .neg {
   color: #5cb85c;
+}
+
+/* ---------- 响应式：手机 ---------- */
+@media (max-width: 768px) {
+  .rpt-page { padding: 12px 12px 72px; gap: 10px; }
+  .rpt-toolbar { flex-wrap: wrap; }
+  .rpt-title { font-size: 18px; }
+  .rpt-meta { flex-wrap: wrap; gap: 6px 16px; justify-content: flex-start; }
+  .rpt-chart { height: 240px; }
+  .rpt-table { font-size: 13px; }
+  .rpt-table th,
+  .rpt-table td { padding: 7px 8px; }
+  .col-profit,
+  .col-acct { width: auto; }
 }
 </style>

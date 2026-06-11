@@ -145,6 +145,7 @@ class Transaction(Base):
     trade_fee: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), default=None)
     trade_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), default=None)
     trade_symbol: Mapped[str | None] = mapped_column(String(32), default=None)
+    trade_exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), default=None)
 
     # 保险记账活动类型：缴纳保费 / 保费返还 / 退保 / 保险分红
     insurance_activity: Mapped[str | None] = mapped_column(String(16), default=None)
@@ -214,6 +215,7 @@ class Holding(Base):
     symbol: Mapped[str | None] = mapped_column(String(32), default=None)
     name: Mapped[str] = mapped_column(String(64))
     type: Mapped[str] = mapped_column(String(24), default="stock")  # stock/fund/bond/metal/forex...
+    currency: Mapped[str] = mapped_column(String(3), default="CNY")  # 持仓币种（外币理财/外汇持仓为对应外币代码）
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0)
     cost: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 4), default=0)

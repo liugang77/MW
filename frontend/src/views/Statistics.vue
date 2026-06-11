@@ -101,12 +101,12 @@ watch(() => ledgerStore.currentId, load)
 
     <el-card shadow="never" style="margin-bottom:16px">
       <div style="margin-bottom:8px;font-weight:600">本月支出分类占比</div>
-      <v-chart v-if="hasPie" :option="pieOption" style="height:320px" autoresize />
+      <v-chart v-if="hasPie" :option="pieOption" class="stat-chart" autoresize />
       <el-empty v-else description="本月暂无支出数据" :image-size="80" />
     </el-card>
     <el-card shadow="never">
       <div style="margin-bottom:8px;font-weight:600">收支趋势（按月）</div>
-      <v-chart v-if="hasBar" :option="barOption" style="height:320px" autoresize />
+      <v-chart v-if="hasBar" :option="barOption" class="stat-chart" autoresize />
       <el-empty v-else description="暂无收支趋势数据" :image-size="80" />
     </el-card>
   </div>
@@ -115,4 +115,9 @@ watch(() => ledgerStore.currentId, load)
 <style scoped>
 .diag-k { color: #909399; font-size: 13px; }
 .diag-v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.stat-chart { height: 320px; width: 100%; }
+@media (max-width: 768px) {
+  .stat-chart { height: 260px; }
+  .diag-v { font-size: 17px; }
+}
 </style>

@@ -52,25 +52,39 @@ def _ensure_ledger_tables(connection, ledger_id: int) -> None:
 
 
 def _ensure_ledger_columns(connection) -> None:
-    """轻量迁移：为既有账本库补充新增列。"""
+    """轻量迁移：为既有账本库补充新增列。忽略已存在列（防并发重入）。"""
     raw = connection.connection
     cur = raw.cursor()
+
+    def safe_add(sql: str) -> None:
+        try:
+            cur.execute(sql)
+        except Exception:
+            pass  # 列已存在（并发或重入）时安全忽略
+
     try:
         cur.execute("PRAGMA ledger.table_info('transaction')")
         cols = {row[1] for row in cur.fetchall()}
         if "split_group" not in cols:
-            cur.execute('ALTER TABLE ledger."transaction" ADD COLUMN split_group VARCHAR(32)')
+            safe_add('ALTER TABLE ledger."transaction" ADD COLUMN split_group VARCHAR(32)')
         if "insurance_activity" not in cols:
-            cur.execute('ALTER TABLE ledger."transaction" ADD COLUMN insurance_activity VARCHAR(16)')
+            safe_add('ALTER TABLE ledger."transaction" ADD COLUMN insurance_activity VARCHAR(16)')
         if "ipo_status" not in cols:
-            cur.execute('ALTER TABLE ledger."transaction" ADD COLUMN ipo_status VARCHAR(12)')
+            safe_add('ALTER TABLE ledger."transaction" ADD COLUMN ipo_status VARCHAR(12)')
+        if "trade_exchange_rate" not in cols:
+            safe_add('ALTER TABLE ledger."transaction" ADD COLUMN trade_exchange_rate NUMERIC(10, 4)')
+        # holding 表新增列
+        cur.execute("PRAGMA ledger.table_info('holding')")
+        hold_cols = {row[1] for row in cur.fetchall()}
+        if "currency" not in hold_cols:
+            safe_add('ALTER TABLE ledger.holding ADD COLUMN currency VARCHAR(3) DEFAULT \'CNY\'')
         # account 表新增列
         cur.execute("PRAGMA ledger.table_info('account')")
         acc_cols = {row[1] for row in cur.fetchall()}
         if "stock_market" not in acc_cols:
-            cur.execute("ALTER TABLE ledger.account ADD COLUMN stock_market VARCHAR(16)")
+            safe_add("ALTER TABLE ledger.account ADD COLUMN stock_market VARCHAR(16)")
         if "asset_nature" not in acc_cols:
-            cur.execute("ALTER TABLE ledger.account ADD COLUMN asset_nature VARCHAR(16)")
+            safe_add("ALTER TABLE ledger.account ADD COLUMN asset_nature VARCHAR(16)")
     finally:
         cur.close()
 

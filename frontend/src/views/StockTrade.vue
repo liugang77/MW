@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useLedgerStore } from '../stores/ledger'
 import { useTradeStore } from '../stores/trade'
-import type { Account, Tag, Holding, TradeFeeRate, Instrument, InstrumentPrice } from '../types'
+import type { Account, Tag, Holding, TradeFeeRate, Instrument, InstrumentPrice, Currency, ExchangeRate } from '../types'
 
 const ledgerStore = useLedgerStore()
 const tradeStore = useTradeStore()
@@ -15,6 +15,8 @@ const holdings = ref<Holding[]>([])
 const feeRates = ref<TradeFeeRate[]>([])
 const instruments = ref<Instrument[]>([])
 const instrumentPrices = ref<InstrumentPrice[]>([])
+const currencies = ref<Currency[]>([])
+const exchangeRates = ref<ExchangeRate[]>([])
 
 const STOCK_TYPES = ['stock', 'fund', 'open_fund', 'money_fund', 'bond', 'reverse_repo', 'wealth', 'metal', 'metal_td', 'futures', 'margin']
 const CASH_TYPES = ['cash', 'bank', 'wallet', 'prepaid']
@@ -40,6 +42,24 @@ const stockAccounts = computed(() => {
 })
 // 资金账户可以是现金类账户，也可以是股票账户
 const cashAccounts = computed(() => accounts.value.filter((a) => CASH_TYPES.includes(a.type) || STOCK_TYPES.includes(a.type)))
+// 理财外币申购：资金账户必须与所选币种一致（直接从外币账户扣款）
+const wealthCashAccounts = computed(() => {
+  if (!isWealth.value || !isBuy.value || wealthCurrency.value === 'CNY') return cashAccounts.value
+  // 外币申购：显示币种完全匹配的账户，以及外汇账户（外汇账户持有多种货币，以实际持仓扣款）
+  return accounts.value.filter((a) => a.currency === wealthCurrency.value || a.type === 'forex')
+})
+// 理财外币赎回：资金账户过滤
+const wealthRedeemCashAccounts = computed(() => {
+  if (!isWealth.value || isBuy.value) return cashAccounts.value
+  const cur = redeemHoldingCurrency.value
+  if (cur === 'CNY') return cashAccounts.value
+  if (wealthRedeemToCny.value) {
+    // 兑换为人民币：支持 CNY 账户
+    return accounts.value.filter((a) => a.currency === 'CNY' || CASH_TYPES.includes(a.type))
+  }
+  // 原币退回：支持同币种账户和外汇账户
+  return accounts.value.filter((a) => a.currency === cur || a.type === 'forex')
+})
 
 const FUND_TYPES = ['fund', 'open_fund', 'money_fund']
 const isFund = computed(() => {
@@ -75,6 +95,17 @@ const accountLabel = computed(() => isWealth.value ? '理财账户' : isFund.val
 
 // 理财申购金额（理财专用，等价于 price=1 × quantity=金额）
 const wealthAmount = ref('')
+const wealthCurrency = ref('CNY')
+const wealthExchangeRate = ref('')
+// 赎回时：是否将外币兑换为人民币（true=兑换CNY，false=原币退回）
+const wealthRedeemToCny = ref(false)
+
+// 当前赎回持仓的币种
+const redeemHoldingCurrency = computed(() => {
+  if (!isWealth.value || isBuy.value) return 'CNY'
+  const h = accountHoldings.value.find((x) => x.symbol === symbol.value)
+  return h?.currency || 'CNY'
+})
 
 const securityAccountId = ref<number | null>(null)
 const cashAccountId = ref<number | null>(null)
@@ -159,6 +190,45 @@ watch(securityAccountId, (val) => { if (val != null && !suppressCashFollow) cash
 // 切换账户分类时，重新加载对应分类的可选代码与价格
 watch(currentCategory, () => { loadInstruments() })
 
+// 理财货币改变时：自动加载最新汇率 + 重置资金账户到匹配币种的账户
+watch(wealthCurrency, async (currency) => {
+  if (currency && currency !== 'CNY') {
+    const rate = exchangeRates.value.find((r) => r.currency_code === currency)
+    wealthExchangeRate.value = rate ? String(rate.rate) : ''
+  } else {
+    wealthExchangeRate.value = currency === 'CNY' ? '1' : ''
+  }
+  // 自动选第一个匹配币种的资金账户
+  const matched = wealthCashAccounts.value[0]
+  cashAccountId.value = matched ? matched.id : null
+})
+
+// 赎回「兑换为人民币」切换时：更新汇率默认值并重置资金账户
+watch(wealthRedeemToCny, async (toCny) => {
+  if (!isWealth.value || isBuy.value) return
+  const cur = redeemHoldingCurrency.value
+  if (cur !== 'CNY') {
+    if (toCny) {
+      const rate = exchangeRates.value.find((r) => r.currency_code === cur)
+      wealthExchangeRate.value = rate ? String(rate.rate) : ''
+    } else {
+      wealthExchangeRate.value = ''
+    }
+  }
+  const matched = wealthRedeemCashAccounts.value[0]
+  cashAccountId.value = matched ? matched.id : null
+})
+
+// 赎回选择持仓时：如果是外币产品，自动处理外汇账户
+watch(symbol, () => {
+  if (!isWealth.value || isBuy.value) return
+  const cur = redeemHoldingCurrency.value
+  if (cur !== 'CNY') {
+    const matched = wealthRedeemCashAccounts.value[0]
+    cashAccountId.value = matched ? matched.id : null
+  }
+})
+
 async function loadMeta() {
   const lid = ledgerStore.currentId
   if (!lid) return
@@ -170,6 +240,8 @@ async function loadMeta() {
   tags.value = await api.listTags(lid)
   holdings.value = await api.listHoldings(lid)
   feeRates.value = await api.listTradeFeeRates(lid)
+  currencies.value = await api.listCurrencies(lid)
+  exchangeRates.value = await api.listExchangeRates(lid)
   if (tradeStore.presetAccountId && stockAccounts.value.some((a) => a.id === tradeStore.presetAccountId)) {
     securityAccountId.value = tradeStore.presetAccountId
   } else if (!securityAccountId.value && stockAccounts.value.length) {
@@ -270,6 +342,9 @@ function reset() {
   remark.value = ''
   pnlAs.value = 'invest_income'
   occurredAt.value = new Date().toISOString().slice(0, 10)
+  wealthCurrency.value = 'CNY'
+  wealthExchangeRate.value = ''
+  wealthRedeemToCny.value = false
 }
 
 // 选择证券代码时回填名称与现价
@@ -363,6 +438,10 @@ function buildPayload() {
   const acc = accounts.value.find((a) => a.id === securityAccountId.value)
   // 银行理财：以「申购金额」记账，单价记为 1、份额即金额，无额外费用
   const wAmt = num(wealthAmount.value)
+  // 外币理财：amount_total 保持外币金额（直接从外币账户扣款）；CNY 折算由 exchange_rate 在后端完成
+  // CNY 理财：amount_total = wAmt
+  const wealthRate = isWealth.value && wealthCurrency.value !== 'CNY' ? num(wealthExchangeRate.value) : 1
+  const _ = wealthRate  // exchange_rate 传给后端折算持仓成本（unused in amtT）
   const p = isWealth.value ? '1' : (price.value || 0)
   const q = isWealth.value ? String(wAmt) : (quantity.value || 0)
   const feeT = isWealth.value ? '0' : (feeTotal.value || 0)
@@ -385,7 +464,16 @@ function buildPayload() {
     remark: remark.value || null,
     tag_ids: tagIds.value,
     ...(tradeStore.editTxn ? { edit_txn_id: tradeStore.editTxn.id } : {}),
-    ...(isBuy.value ? {} : { pnl_as: pnlAs.value })
+    ...(isBuy.value ? {} : { pnl_as: pnlAs.value }),
+    ...(isWealth.value && isBuy.value ? { 
+      currency: wealthCurrency.value,
+      exchange_rate: wealthExchangeRate.value ? num(wealthExchangeRate.value) : (wealthCurrency.value === 'CNY' ? 1 : null)
+    } : {}),
+    ...(isWealth.value && !isBuy.value && redeemHoldingCurrency.value !== 'CNY' ? {
+      currency: redeemHoldingCurrency.value,
+      exchange_rate: wealthRedeemToCny.value && wealthExchangeRate.value ? num(wealthExchangeRate.value) : null,
+      redeem_to_cny: wealthRedeemToCny.value,
+    } : {})
   }
 }
 
@@ -400,6 +488,15 @@ function validate(): boolean {
   }
   if (isWealth.value) {
     if (!(num(wealthAmount.value) > 0)) { ElMessage.warning(isBuy.value ? '请输入申购金额' : '请输入赎回金额'); return false }
+    if (isBuy.value && wealthCurrency.value !== 'CNY') {
+      const cashAcc = accounts.value.find((a) => a.id === cashAccountId.value)
+      if (!cashAcc) { ElMessage.warning('请选择资金账户'); return false }
+      // 外汇账户（type=forex）持有多种货币，允许直接选用；普通账户需币种匹配
+      if (cashAcc.type !== 'forex' && cashAcc.currency !== wealthCurrency.value) {
+        ElMessage.warning(`外币理财申购的资金账户必须是 ${wealthCurrency.value} 账户或外汇账户`); return false
+      }
+      if (!(num(wealthExchangeRate.value) > 0)) { ElMessage.warning('请输入汇率'); return false }
+    }
     return true
   }
   if (!(num(price.value) >= 0)) { ElMessage.warning('请输入价格'); return false }
@@ -446,6 +543,14 @@ function prefillEdit() {
   quantity.value = e.quantity != null ? String(e.quantity) : ''
   // 理财：金额 = 价格×份额（price=1 时即份额）
   wealthAmount.value = e.quantity != null && e.price != null ? String(round2(Number(e.price) * Number(e.quantity))) : ''
+  // 理财外币申购：回填币种和申购时汇率
+  if (e.currency && e.currency !== 'CNY') {
+    wealthCurrency.value = e.currency
+    wealthExchangeRate.value = e.exchange_rate != null ? String(e.exchange_rate) : ''
+  } else {
+    wealthCurrency.value = 'CNY'
+    wealthExchangeRate.value = ''
+  }
   const comm = Number(e.commission || 0)
   const feeAll = Number(e.fee_total || 0)
   stampRate.value = ''
@@ -494,7 +599,12 @@ watch(() => tradeStore.mode, () => { if (tradeStore.visible && !tradeStore.editT
         <el-col :span="12">
           <el-form-item label="资金账户">
             <el-select v-model="cashAccountId" placeholder="选择资金账户" style="width:100%">
-              <el-option v-for="a in cashAccounts" :key="a.id" :label="a.name" :value="a.id" />
+              <el-option
+                v-for="a in (isWealth ? (isBuy ? wealthCashAccounts : wealthRedeemCashAccounts) : cashAccounts)"
+                :key="a.id"
+                :label="a.type === 'forex' ? `${a.name} [外汇]` : (a.currency !== 'CNY' ? `${a.name} (${a.currency})` : a.name)"
+                :value="a.id"
+              />
             </el-select>
           </el-form-item>
         </el-col>
@@ -555,6 +665,43 @@ watch(() => tradeStore.mode, () => { if (tradeStore.visible && !tradeStore.editT
               <el-option label="投资收益" value="invest_income" />
               <el-option label="其它收入" value="other_income" />
             </el-select>
+          </el-form-item>
+        </el-col>
+      </el-row>
+
+      <el-row v-if="isWealth && isBuy" :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="币种">
+            <el-select v-model="wealthCurrency" style="width:100%">
+              <el-option
+                v-for="curr in currencies"
+                :key="curr.code"
+                :label="`${curr.code} ${curr.name}`"
+                :value="curr.code"
+              />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item v-if="wealthCurrency !== 'CNY'" label="汇率" required>
+            <el-input v-model="wealthExchangeRate" type="number" placeholder="0.00" />
+          </el-form-item>
+        </el-col>
+      </el-row>
+
+      <!-- 外币理财赎回：选择回款方式（原币/兑换CNY）及汇率 -->
+      <el-row v-if="isWealth && !isBuy && redeemHoldingCurrency !== 'CNY'" :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="回款方式">
+            <el-radio-group v-model="wealthRedeemToCny">
+              <el-radio :value="false">原币（{{ redeemHoldingCurrency }}）退回</el-radio>
+              <el-radio :value="true">兑换为人民币</el-radio>
+            </el-radio-group>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item v-if="wealthRedeemToCny" label="兑换汇率" required>
+            <el-input v-model="wealthExchangeRate" type="number" placeholder="1 USD ≈ ? CNY" />
           </el-form-item>
         </el-col>
       </el-row>
