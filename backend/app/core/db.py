@@ -73,6 +73,8 @@ def _ensure_ledger_columns(connection) -> None:
             safe_add('ALTER TABLE ledger."transaction" ADD COLUMN ipo_status VARCHAR(12)')
         if "trade_exchange_rate" not in cols:
             safe_add('ALTER TABLE ledger."transaction" ADD COLUMN trade_exchange_rate NUMERIC(10, 4)')
+        if "voucher_id" not in cols:
+            safe_add('ALTER TABLE ledger."transaction" ADD COLUMN voucher_id INTEGER')
         # holding 表新增列
         cur.execute("PRAGMA ledger.table_info('holding')")
         hold_cols = {row[1] for row in cur.fetchall()}

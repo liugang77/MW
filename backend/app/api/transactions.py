@@ -49,6 +49,7 @@ def _to_out(txn: models.Transaction) -> dict:
     data["trade_symbol"] = txn.trade_symbol
     data["loan_id"] = txn.loan_id
     data["collect_group"] = txn.collect_group
+    data["voucher_id"] = txn.voucher_id
     data["insurance_activity"] = txn.insurance_activity
     data["ipo_status"] = txn.ipo_status
     return data
@@ -743,6 +744,12 @@ def delete_transaction(txn_id: int, db: Session = Depends(get_db)):
             _reverse_loan_lend(db, loan)
             db.commit()
             return {"detail": "已删除"}
+    # 团购券流水：按购券/核销/退券性质回滚券状态
+    if txn.voucher_id:
+        from app.api.vouchers import _reverse_voucher_txn
+        _reverse_voucher_txn(db, txn)
+        db.commit()
+        return {"detail": "已删除"}
     # 外汇买卖/转账流水：回滚对方账户余额并重算外汇持仓
     forex_acc = _forex_account_of(db, txn)
     if forex_acc is not None:

@@ -7,6 +7,7 @@ import ForexAccount from '../views/ForexAccount.vue'
 import MetalAccount from '../views/MetalAccount.vue'
 import FundAccount from '../views/FundAccount.vue'
 import WealthAccount from '../views/WealthAccount.vue'
+import VoucherAccount from '../views/VoucherAccount.vue'
 import Accounts from '../views/Accounts.vue'
 import Statistics from '../views/Statistics.vue'
 import Budgets from '../views/Budgets.vue'
@@ -33,6 +34,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/credit', name: 'credit', component: CreditCard, meta: { title: '信用卡' } },
   { path: '/forex', name: 'forex', component: ForexAccount, meta: { title: '外汇账户' } },
   { path: '/metal', name: 'metal', component: MetalAccount, meta: { title: '贵金属账户' } },
+  { path: '/voucher', name: 'voucher', component: VoucherAccount, meta: { title: '团购券账户' } },
   { path: '/accounts', name: 'accounts', component: Accounts, meta: { title: '账户' } },
   { path: '/investments', name: 'investments', component: Investments, meta: { title: '投资' } },
   { path: '/p2p', name: 'p2p', component: P2PProjects, meta: { title: '网贷' } },

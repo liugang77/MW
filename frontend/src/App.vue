@@ -13,6 +13,7 @@ import { useForexStore } from './stores/forex'
 import { useMajorAssetStore } from './stores/majorAsset'
 import { useSalaryStore } from './stores/salary'
 import { useIpoStore } from './stores/ipo'
+import { useVoucherStore } from './stores/voucher'
 import { api } from './api'
 import { isLoading } from './api/loading'
 import type { Account, Holding } from './types'
@@ -39,6 +40,7 @@ const forexStore = useForexStore()
 const majorAssetStore = useMajorAssetStore()
 const salaryStore = useSalaryStore()
 const ipoStore = useIpoStore()
+const voucherStore = useVoucherStore()
 const route = useRoute()
 const router = useRouter()
 const isMobileTab = computed(() => ['/', '/transactions', '/accounts', '/statistics'].includes(route.path))
@@ -152,7 +154,8 @@ const accountTypeLabel: Record<string, string> = {
   credit: '信用卡', stock: '金融投资', fund: '金融投资', open_fund: '金融投资', money_fund: '金融投资',
   bond: '金融投资', reverse_repo: '金融投资', wealth: '金融投资', metal: '金融投资',
   metal_td: '金融投资', forex: '金融投资', futures: '金融投资', margin: '金融投资',
-  p2p: '金融投资', goods: '重大资产', major_asset: '重大资产', insurance: '保险', loan: '债权债务'
+  p2p: '金融投资', goods: '重大资产', major_asset: '重大资产', insurance: '保险', loan: '债权债务',
+  voucher: '团购券'
 }
 
 const accountGroups = computed(() => {
@@ -163,7 +166,7 @@ const accountGroups = computed(() => {
     g.get(group)!.push(a)
   }
   // 侧栏分组固定显示顺序：现金、银行存款、第三方储值、信用卡、金融投资，其余在后
-  const GROUP_ORDER = ['现金', '银行存款', '第三方储值', '信用卡', '金融投资', '保险', '债权债务', '重大资产']
+  const GROUP_ORDER = ['现金', '银行存款', '第三方储值', '团购券', '信用卡', '金融投资', '保险', '债权债务', '重大资产']
   const orderIndex = (name: string) => {
     const i = GROUP_ORDER.indexOf(name)
     return i === -1 ? GROUP_ORDER.length : i
@@ -264,6 +267,10 @@ function openAccount(id: number) {
   if (acc && (acc.type === 'metal' || acc.type === 'metal_td')) {
     return router.push({ path: '/metal', query: { account_id: String(id) } })
   }
+  // 团购券账户进入独立的团购券账户页面
+  if (acc && acc.type === 'voucher') {
+    return router.push({ path: '/voucher', query: { account_id: String(id) } })
+  }
   // 基金账户进入独立的基金账户页面
   if (acc && ['fund', 'open_fund', 'money_fund'].includes(acc.type)) {
     return router.push({ path: '/funds', query: { account_id: String(id) } })
@@ -310,6 +317,8 @@ function onRecordCommand(cmd: string) {
   if (cmd === 'loan-lend') return loanStore.open('receivable')
   // 物品买入（重大资产）
   if (cmd === 'major-buy') return majorAssetStore.open('own')
+  // 团购券购买
+  if (cmd === 'voucher-buy') return voucherStore.open()
   // 更多交易活动
   if (cmd === 'buy') return tradeStore.open('buy')
   if (cmd === 'sell') return tradeStore.open('sell')
@@ -405,6 +414,7 @@ watch(() => recordStore.savedAt, loadAccounts)
 watch(() => p2pStore.savedAt, loadAccounts)
 watch(() => salaryStore.savedAt, loadAccounts)
 watch(() => ipoStore.savedAt, loadAccounts)
+watch(() => voucherStore.savedAt, loadAccounts)
 </script>
 
 <template>
@@ -480,6 +490,7 @@ watch(() => ipoStore.savedAt, loadAccounts)
               <el-dropdown-item command="loan-borrow" divided>借入</el-dropdown-item>
               <el-dropdown-item command="loan-lend">借出</el-dropdown-item>
               <el-dropdown-item command="major-buy" divided>物品买入</el-dropdown-item>
+              <el-dropdown-item command="voucher-buy">购券</el-dropdown-item>
               <el-dropdown-item divided class="cz-record-more">
                 <el-dropdown trigger="hover" placement="right-start" @command="onRecordCommand">
                   <span class="cz-more-trigger">更多交易活动 <span class="cz-more-arrow">›</span></span>

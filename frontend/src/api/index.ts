@@ -3,7 +3,7 @@ import type {
   Ledger, Account, AccountGroup, Party, Category, CategoryKind,
   Transaction, TransactionPage, IpoPending,
   Overview, CategoryStat, TrendItem, NetWorth,
-  Budget, Holding, Loan, LoanRateAdjustment, LoanSchedule, Tag, InvestmentOverview, InvestmentIncomeReport, Diagnosis, Instrument, InstrumentPrice, TradeFeeRate, Currency, ExchangeRate, DepositRate, Plan, InsuranceDetail
+  Budget, Holding, Loan, LoanRateAdjustment, LoanSchedule, Tag, InvestmentOverview, InvestmentIncomeReport, Diagnosis, Instrument, InstrumentPrice, TradeFeeRate, Currency, ExchangeRate, DepositRate, Plan, InsuranceDetail, Voucher
 } from '../types'
 
 // 响应拦截器已解包为 data，这里用泛型断言其真实返回类型
@@ -173,5 +173,15 @@ export const api = {
   updateLoanRateAdjustment: (id: number, data: Record<string, unknown>) =>
     put<LoanRateAdjustment>(`/loan-rate-adjustments/${id}`, data),
   deleteLoanRateAdjustment: (id: number) => del(`/loan-rate-adjustments/${id}`),
-  getLoanSchedule: (loanId: number) => get<LoanSchedule>(`/loans/${loanId}/schedule`)
+  getLoanSchedule: (loanId: number) => get<LoanSchedule>(`/loans/${loanId}/schedule`),
+
+  // 团购券
+  listVouchers: (lid: number, accountId?: number) =>
+    get<Voucher[]>(`/ledgers/${lid}/vouchers${accountId != null ? `?account_id=${accountId}` : ''}`),
+  voucherBuy: (lid: number, data: Record<string, unknown>) => post<Voucher>(`/ledgers/${lid}/vouchers/buy`, data),
+  voucherRedeem: (lid: number, voucherId: number, data: Record<string, unknown>) =>
+    post<Voucher>(`/ledgers/${lid}/vouchers/${voucherId}/redeem`, data),
+  voucherRefund: (lid: number, voucherId: number, data: Record<string, unknown>) =>
+    post<Voucher>(`/ledgers/${lid}/vouchers/${voucherId}/refund`, data),
+  deleteVoucher: (id: number) => del(`/vouchers/${id}`)
 }

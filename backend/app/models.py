@@ -158,6 +158,9 @@ class Transaction(Base):
     # 同一次网贷收回的本金+利息流水共享的分组标识
     collect_group: Mapped[str | None] = mapped_column(String(32), default=None)
 
+    # 团购券（Voucher）的关联：购券/核销/退券流水回滚时恢复券状态
+    voucher_id: Mapped[int | None] = mapped_column(Integer, default=None)
+
     tags: Mapped[list["Tag"]] = relationship(
         secondary=lambda: transaction_tag, lazy="selectin"
     )
@@ -220,6 +223,34 @@ class Holding(Base):
     cost: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     price: Mapped[Decimal] = mapped_column(Numeric(15, 4), default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class Voucher(Base):
+    """团购券：买入后作为预付资产计入账户余额；核销时确认支出（可补差价），
+    到期未用可手动退货，本金退回原购买资金账户。
+
+    账户余额铁律：团购券账户余额 = 所有未核销且未退货券的「剩余张数 × 实付单价」，
+    由购券(转入)/核销(支出)/退券(转出)三类流水自动维护。
+    """
+    __tablename__ = "voucher"
+    __table_args__ = {"schema": "ledger"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ledger_id: Mapped[int] = mapped_column(Integer)
+    account_id: Mapped[int] = mapped_column(ForeignKey("ledger.account.id"))  # 所属团购券账户
+    product: Mapped[str] = mapped_column(String(128))  # 商品名称
+    quantity: Mapped[int] = mapped_column(Integer, default=1)  # 购买张数
+    redeemed: Mapped[int] = mapped_column(Integer, default=0)  # 已核销张数
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)  # 单张实付价（成本/优惠后）
+    face_value: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)  # 单张面值（实际价值）
+    source_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ledger.account.id"), default=None
+    )  # 购买资金账户（= 退货退款目标）
+    purchased_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    expiry_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)  # 有效期截止
+    category_id: Mapped[int | None] = mapped_column(Integer, default=None)  # 默认核销支出分类
+    status: Mapped[str] = mapped_column(String(12), default="active")  # active / used / expired / refunded
+    remark: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class Loan(Base):

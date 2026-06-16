@@ -14,7 +14,7 @@ export type AccountType =
   | 'cash' | 'bank' | 'credit' | 'wallet' | 'prepaid'
   | 'stock' | 'fund' | 'money_fund' | 'bond' | 'reverse_repo' | 'wealth'
   | 'metal' | 'metal_td' | 'forex' | 'futures' | 'margin' | 'p2p'
-  | 'goods' | 'major_asset' | 'insurance' | 'loan'
+  | 'goods' | 'major_asset' | 'insurance' | 'loan' | 'voucher'
 
 export interface Account {
   id: number
@@ -72,7 +72,6 @@ export interface AccountGroup {
   remark?: string | null
   sort_order: number
 }
-
 export interface Party {
   id: number
   ledger_id: number
@@ -211,6 +210,7 @@ export interface Transaction {
   trade_exchange_rate?: string | null
   loan_id?: number | null
   collect_group?: string | null
+  voucher_id?: number | null
   insurance_activity?: string | null
   ipo_status?: string | null
   tag_ids?: number[]
@@ -320,6 +320,27 @@ export interface Holding {
 }
 
 export type LoanDirection = 'receivable' | 'payable'
+
+export interface Voucher {
+  id: number
+  ledger_id: number
+  account_id: number
+  product: string
+  quantity: number
+  redeemed: number
+  unit_price: string
+  face_value: string
+  source_account_id?: number | null
+  purchased_at: string
+  expiry_at?: string | null
+  category_id?: number | null
+  status: string
+  remark?: string | null
+  remaining: number
+  occupied_value: string
+  discount: string
+  is_expired: boolean
+}
 
 export interface Loan {
   id: number

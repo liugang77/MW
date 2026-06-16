@@ -25,6 +25,7 @@ function openAccountRecord(a: Account) {
   if (a.type === 'credit') return router.push({ path: '/credit', query: { account_id: String(a.id) } })
   if (a.type === 'forex') return router.push({ path: '/forex', query: { account_id: String(a.id) } })
   if (a.type === 'metal' || a.type === 'metal_td') return router.push({ path: '/metal', query: { account_id: String(a.id) } })
+  if (a.type === 'voucher') return router.push({ path: '/voucher', query: { account_id: String(a.id) } })
   if (['fund', 'open_fund', 'money_fund'].includes(a.type)) return router.push({ path: '/funds', query: { account_id: String(a.id) } })
   if (a.type === 'wealth') return router.push({ path: '/wealth', query: { account_id: String(a.id) } })
   // 证券类投资账户进入独立的证券账户页面
@@ -152,7 +153,8 @@ const typePicker_sections = [
     items: [
       { v: 'cash', t: '现金' }, { v: 'credit', t: '信用卡' },
       { v: 'dual_credit', t: '双币信用卡' },
-      { v: 'bank', t: '储蓄卡' }, { v: 'prepaid', t: '第三方储值' }
+      { v: 'bank', t: '储蓄卡' }, { v: 'prepaid', t: '第三方储值' },
+      { v: 'voucher', t: '团购券' }
     ]
   },
   {
@@ -194,7 +196,8 @@ const types = [
   { v: 'reverse_repo', t: '逆回购' }, { v: 'wealth', t: '理财' }, { v: 'metal', t: '贵金属' },
   { v: 'metal_td', t: '贵金属T+D' }, { v: 'forex', t: '外汇' }, { v: 'futures', t: '期货' },
   { v: 'margin', t: '融资融券' }, { v: 'p2p', t: 'P2P/网贷' }, { v: 'goods', t: '实物商品' },
-  { v: 'major_asset', t: '大件资产' }, { v: 'insurance', t: '保险' }, { v: 'loan', t: '负债/贷款' }
+  { v: 'major_asset', t: '大件资产' }, { v: 'insurance', t: '保险' }, { v: 'loan', t: '负债/贷款' },
+  { v: 'voucher', t: '团购券' }
 ]
 
 const groupLabel: Record<string, string> = {
@@ -202,7 +205,8 @@ const groupLabel: Record<string, string> = {
   credit: '信用卡', stock: '金融投资', fund: '金融投资', open_fund: '金融投资', money_fund: '金融投资',
   bond: '金融投资', reverse_repo: '金融投资', wealth: '金融投资', metal: '金融投资',
   metal_td: '金融投资', forex: '金融投资', futures: '金融投资', margin: '金融投资',
-  p2p: '金融投资', goods: '重大资产', major_asset: '重大资产', insurance: '保险', loan: '债权债务'
+  p2p: '金融投资', goods: '重大资产', major_asset: '重大资产', insurance: '保险', loan: '债权债务',
+  voucher: '团购券'
 }
 
 const typeText = (v: string) => types.find((t) => t.v === v)?.t || v
