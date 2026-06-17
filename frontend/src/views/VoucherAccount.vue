@@ -151,6 +151,7 @@ async function loadTxns() {
 const buyDialog = ref(false)
 const savingBuy = ref(false)
 const buyEditTxnId = ref<number | null>(null)
+const buyMinQty = ref(1)
 const buyForm = reactive<{
   product: string
   quantity: number | null
@@ -188,6 +189,7 @@ function openBuy() {
     return
   }
   buyEditTxnId.value = null
+  buyMinQty.value = 1
   resetBuyForm()
   buyDialog.value = true
 }
@@ -196,6 +198,7 @@ function openBuyEdit(t: Transaction) {
   const v = vouchers.value.find((x) => x.id === t.voucher_id)
   if (!v) return ElMessage.info('未找到对应的团购券')
   buyEditTxnId.value = t.id
+  buyMinQty.value = Math.max(v.redeemed || 0, 1)
   selectedAccountId.value = v.account_id
   buyForm.product = v.product
   buyForm.quantity = v.quantity
@@ -524,8 +527,8 @@ watch(selectedAccountId, async () => {
 
     <!-- 购券 / 修改购券（横板） -->
     <el-dialog v-model="buyDialog" :title="buyTitle" width="92%" style="max-width:760px" :close-on-click-modal="false">
-      <el-alert v-if="buyEditTxnId" type="warning" :closable="false" show-icon
-                title="修改购券会按新内容重建该券，原有的核销 / 退货记录将被清除。" style="margin-bottom:12px" />
+      <el-alert v-if="buyEditTxnId" type="info" :closable="false" show-icon
+                title="修改购券会按新的单价 / 张数重算该券的核销、退货金额；已有的核销 / 退货记录保留。" style="margin-bottom:12px" />
       <el-form label-width="92px">
         <el-row :gutter="20">
           <el-col :span="12">
@@ -542,7 +545,7 @@ watch(selectedAccountId, async () => {
           </el-col>
           <el-col :span="12">
             <el-form-item label="购买张数" required>
-              <el-input-number v-model="buyForm.quantity" :min="1" :precision="0" :controls="false" style="width:100%" />
+              <el-input-number v-model="buyForm.quantity" :min="buyMinQty" :precision="0" :controls="false" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :span="12">

@@ -117,6 +117,82 @@ def _reverse_voucher_txn(db: Session, txn: models.Transaction) -> None:
     db.flush()
 
 
+def _voucher_buy_edit(db: Session, ledger_id: int, payload: schemas.VoucherBuy) -> schemas.VoucherOut:
+    """购券修改：原地更新券资料并按新的单价/张数重算该券所有流水金额，
+    **保留**已有的核销 / 退货记录（不清除）。即只改「当时购买/实际消费的金额」。
+
+    - 购券流水金额 = 张数 × 实付单价（资金账户可改，到期退款目标随之变更）。
+    - 核销流水金额 = 该笔核销张数 × 新实付单价（核销张数、日期、分类、补差价均不变）。
+    - 退券流水金额 = 剩余张数 × 新实付单价。
+    """
+    old_buy = db.get(models.Transaction, payload.edit_txn_id)
+    if not old_buy or not old_buy.voucher_id:
+        raise HTTPException(404, "原购券流水不存在")
+    voucher = db.get(models.Voucher, old_buy.voucher_id)
+    if not voucher:
+        raise HTTPException(404, "团购券不存在")
+    if payload.quantity < (voucher.redeemed or 0):
+        raise HTTPException(400, f"购买张数不能小于已核销张数（{voucher.redeemed}）")
+
+    new_up = Decimal(payload.unit_price)
+    new_src = payload.source_account_id
+    occurred = payload.purchased_at or voucher.purchased_at or datetime.now()
+    face = payload.face_value if payload.face_value is not None else new_up
+
+    # 更新券资料（保留 redeemed 与 status —— 核销/退货记录不动）
+    voucher.product = payload.product
+    voucher.quantity = payload.quantity
+    voucher.unit_price = new_up
+    voucher.face_value = Decimal(face)
+    voucher.source_account_id = new_src
+    voucher.purchased_at = occurred
+    voucher.expiry_at = payload.expiry_at
+    voucher.category_id = payload.category_id
+    voucher.remark = payload.remark
+
+    txns = (
+        db.query(models.Transaction)
+        .filter(models.Transaction.ledger_id == ledger_id,
+                models.Transaction.voucher_id == voucher.id)
+        .all()
+    )
+    remaining = (voucher.quantity or 0) - (voucher.redeemed or 0)
+    for t in txns:
+        if _is_buy_txn(t, voucher):
+            apply_transaction(db, t, sign=-1)
+            amt = _round2(new_up * voucher.quantity)
+            if new_src:
+                t.type = "transfer"; t.account_id = new_src
+                t.to_account_id = voucher.account_id; t.amount = amt
+            else:
+                t.type = "adjust"; t.account_id = voucher.account_id
+                t.to_account_id = None; t.amount = amt
+            t.occurred_at = occurred
+            t.remark = payload.remark or f"购券：{voucher.product} {voucher.quantity}张"
+            _attach_tags(db, t, payload.tag_ids)
+            apply_transaction(db, t, sign=1)
+        elif _is_refund_txn(t, voucher):
+            apply_transaction(db, t, sign=-1)
+            amt = _round2(new_up * remaining)
+            if new_src:
+                t.type = "transfer"; t.account_id = voucher.account_id
+                t.to_account_id = new_src; t.amount = amt
+            else:
+                t.type = "adjust"; t.account_id = voucher.account_id
+                t.to_account_id = None; t.amount = -amt
+            apply_transaction(db, t, sign=1)
+        elif t.type == "expense" and t.account_id == voucher.account_id:
+            # 核销「券价」流水（补差价记在资金账户上，account_id != 券账户，不在此重算）
+            apply_transaction(db, t, sign=-1)
+            t.amount = _round2(new_up * Decimal(t.trade_qty or 0))
+            apply_transaction(db, t, sign=1)
+
+    db.flush()
+    db.commit()
+    db.refresh(voucher)
+    return _voucher_out(voucher)
+
+
 @router.get("/ledgers/{ledger_id}/vouchers", response_model=list[schemas.VoucherOut])
 def list_vouchers(ledger_id: int, account_id: int | None = None, db: Session = Depends(get_db)):
     q = db.query(models.Voucher).filter(models.Voucher.ledger_id == ledger_id)
@@ -134,12 +210,9 @@ def voucher_buy(ledger_id: int, payload: schemas.VoucherBuy, db: Session = Depen
     if payload.unit_price < 0:
         raise HTTPException(400, "实付单价不能为负")
 
-    # 编辑模式：先回滚并删除原购券（整券及其全部流水）
+    # 编辑模式：原地更新券资料并按新单价/张数重算流水，保留核销/退货记录
     if payload.edit_txn_id:
-        old = db.get(models.Transaction, payload.edit_txn_id)
-        if old and old.voucher_id:
-            _reverse_voucher_txn(db, old)
-            db.flush()
+        return _voucher_buy_edit(db, ledger_id, payload)
 
     occurred = payload.purchased_at or datetime.now()
     face = payload.face_value if payload.face_value is not None else payload.unit_price
