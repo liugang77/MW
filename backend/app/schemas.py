@@ -775,6 +775,7 @@ class VoucherBuy(BaseModel):
     category_id: int | None = None         # 默认核销支出分类
     remark: str | None = None
     tag_ids: list[int] = []
+    edit_txn_id: int | None = None         # 编辑模式：先回滚并删除原购券（整券）后重建
 
 
 class VoucherRedeem(BaseModel):
@@ -786,12 +787,14 @@ class VoucherRedeem(BaseModel):
     occurred_at: datetime | None = None
     remark: str | None = None
     tag_ids: list[int] = []
+    edit_txn_id: int | None = None         # 编辑模式：先回滚原核销（恢复已核销张数）后重建
 
 
 class VoucherRefund(BaseModel):
     """退货：到期未用，剩余券本金退回原购买账户。"""
     occurred_at: datetime | None = None
     remark: str | None = None
+    edit_txn_id: int | None = None         # 编辑模式：先回滚原退货（状态恢复）后重建
 
 
 class VoucherOut(BaseModel):

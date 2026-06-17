@@ -134,6 +134,13 @@ def voucher_buy(ledger_id: int, payload: schemas.VoucherBuy, db: Session = Depen
     if payload.unit_price < 0:
         raise HTTPException(400, "实付单价不能为负")
 
+    # 编辑模式：先回滚并删除原购券（整券及其全部流水）
+    if payload.edit_txn_id:
+        old = db.get(models.Transaction, payload.edit_txn_id)
+        if old and old.voucher_id:
+            _reverse_voucher_txn(db, old)
+            db.flush()
+
     occurred = payload.purchased_at or datetime.now()
     face = payload.face_value if payload.face_value is not None else payload.unit_price
     voucher = models.Voucher(
@@ -189,9 +196,17 @@ def voucher_redeem(
     voucher = db.get(models.Voucher, voucher_id)
     if not voucher:
         raise HTTPException(404, "团购券不存在")
+    # 编辑模式：先回滚原核销（恢复已核销张数与状态）
+    if payload.edit_txn_id:
+        old = db.get(models.Transaction, payload.edit_txn_id)
+        if old and old.voucher_id == voucher.id:
+            _reverse_voucher_txn(db, old)
+            db.flush()
     if voucher.status == "refunded":
         raise HTTPException(400, "该券已退货，无法核销")
-    if voucher.expiry_at and voucher.status == "active" and voucher.expiry_at < datetime.now():
+    # 仅对新增核销检查过期；编辑已有核销记录不受过期限制
+    if (payload.edit_txn_id is None and voucher.expiry_at
+            and voucher.status == "active" and voucher.expiry_at < datetime.now()):
         raise HTTPException(400, "该券已过期，无法核销，请改为退货")
     remaining = (voucher.quantity or 0) - (voucher.redeemed or 0)
     k = payload.quantity
@@ -248,6 +263,12 @@ def voucher_refund(
     voucher = db.get(models.Voucher, voucher_id)
     if not voucher:
         raise HTTPException(404, "团购券不存在")
+    # 编辑模式：先回滚原退货（状态恢复为 active）
+    if payload.edit_txn_id:
+        old = db.get(models.Transaction, payload.edit_txn_id)
+        if old and old.voucher_id == voucher.id:
+            _reverse_voucher_txn(db, old)
+            db.flush()
     if voucher.status == "refunded":
         raise HTTPException(400, "该券已退货")
     remaining = (voucher.quantity or 0) - (voucher.redeemed or 0)

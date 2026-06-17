@@ -91,6 +91,25 @@ function txnActivity(t: Transaction): string {
   return cat ? `【${cat}】` : (t.type === 'income' ? '收入' : '支出')
 }
 
+// 判断某交易记录可以用哪种「修改」界面
+function txnEditKind(t: Transaction): 'buy' | 'redeem' | 'refund' | null {
+  if (!t.voucher_id) return null
+  const vid = selectedAccountId.value
+  if (t.type === 'expense' && t.account_id === vid) return 'redeem'
+  if (t.type === 'transfer' && t.to_account_id === vid) return 'buy'
+  if (t.type === 'adjust' && toNum(t.amount) >= 0) return 'buy'
+  if (t.type === 'transfer' && t.account_id === vid) return 'refund'
+  if (t.type === 'adjust' && toNum(t.amount) < 0) return 'refund'
+  return null
+}
+function onEditTxn(t: Transaction) {
+  const k = txnEditKind(t)
+  if (k === 'buy') return openBuyEdit(t)
+  if (k === 'redeem') return openRedeemEdit(t)
+  if (k === 'refund') return openRefundEdit(t)
+  ElMessage.info('该记录暂不支持修改')
+}
+
 async function load() {
   const lid = ledgerStore.currentId
   if (!lid) return
@@ -128,9 +147,10 @@ async function loadTxns() {
   transactions.value = res.items
 }
 
-// ---------------- 购券 ----------------
+// ---------------- 购券（新增 / 修改） ----------------
 const buyDialog = ref(false)
 const savingBuy = ref(false)
+const buyEditTxnId = ref<number | null>(null)
 const buyForm = reactive<{
   product: string
   quantity: number | null
@@ -147,12 +167,9 @@ const buyForm = reactive<{
   source_account_id: null, purchased_at: '', expiry_at: '',
   category_id: null, remark: '', tag_ids: []
 })
+const buyTitle = computed(() => (buyEditTxnId.value ? '修改购券' : '购券'))
 
-function openBuy() {
-  if (!voucherAccounts.value.length) {
-    ElMessage.warning('请先创建一个「团购券」类型的账户')
-    return
-  }
+function resetBuyForm() {
   buyForm.product = ''
   buyForm.quantity = 1
   buyForm.face_value = null
@@ -163,6 +180,34 @@ function openBuy() {
   buyForm.category_id = null
   buyForm.remark = ''
   buyForm.tag_ids = []
+}
+
+function openBuy() {
+  if (!voucherAccounts.value.length) {
+    ElMessage.warning('请先创建一个「团购券」类型的账户')
+    return
+  }
+  buyEditTxnId.value = null
+  resetBuyForm()
+  buyDialog.value = true
+}
+
+function openBuyEdit(t: Transaction) {
+  const v = vouchers.value.find((x) => x.id === t.voucher_id)
+  if (!v) return ElMessage.info('未找到对应的团购券')
+  buyEditTxnId.value = t.id
+  selectedAccountId.value = v.account_id
+  buyForm.product = v.product
+  buyForm.quantity = v.quantity
+  buyForm.face_value = toNum(v.face_value)
+  buyForm.unit_price = toNum(v.unit_price)
+  buyForm.source_account_id = v.source_account_id ?? null
+  buyForm.purchased_at = fmtDate(v.purchased_at)
+  buyForm.expiry_at = fmtDate(v.expiry_at)
+  buyForm.category_id = v.category_id ?? null
+  // 修改即按新内容重建该券：不沿用原券备注（避免带入“忘记使用，已过期”等旧状态说明）
+  buyForm.remark = ''
+  buyForm.tag_ids = t.tag_ids ? [...t.tag_ids] : []
   buyDialog.value = true
 }
 
@@ -185,9 +230,10 @@ async function submitBuy() {
       expiry_at: buyForm.expiry_at || undefined,
       category_id: buyForm.category_id ?? undefined,
       remark: buyForm.remark || undefined,
-      tag_ids: buyForm.tag_ids
+      tag_ids: buyForm.tag_ids,
+      edit_txn_id: buyEditTxnId.value ?? undefined
     })
-    ElMessage.success('购券成功')
+    ElMessage.success(buyEditTxnId.value ? '已修改购券' : '购券成功')
     buyDialog.value = false
     voucherStore.markSaved()
     await load()
@@ -196,10 +242,12 @@ async function submitBuy() {
   }
 }
 
-// ---------------- 核销 ----------------
+// ---------------- 核销（新增 / 修改） ----------------
 const redeemDialog = ref(false)
 const savingRedeem = ref(false)
 const redeemTarget = ref<Voucher | null>(null)
+const redeemEditTxnId = ref<number | null>(null)
+const redeemEditOldQty = ref(0)
 const redeemForm = reactive<{
   quantity: number | null
   category_id: number | null
@@ -208,11 +256,17 @@ const redeemForm = reactive<{
   occurred_at: string
   remark: string
 }>({ quantity: 1, category_id: null, topup: 0, topup_account_id: null, occurred_at: '', remark: '' })
+const redeemTitle = computed(() => (redeemEditTxnId.value ? '修改核销' : '核销'))
+const redeemMax = computed(() =>
+  redeemTarget.value ? redeemTarget.value.remaining + (redeemEditTxnId.value ? redeemEditOldQty.value : 0) : 1
+)
 
 function openRedeem(v: Voucher) {
   if (v.is_expired) return ElMessage.info('该券已过期，只能退货')
   if (v.remaining <= 0) return ElMessage.info('该券没有可核销的剩余张数')
   redeemTarget.value = v
+  redeemEditTxnId.value = null
+  redeemEditOldQty.value = 0
   redeemForm.quantity = 1
   redeemForm.category_id = v.category_id ?? null
   redeemForm.topup = 0
@@ -222,12 +276,39 @@ function openRedeem(v: Voucher) {
   redeemDialog.value = true
 }
 
+async function openRedeemEdit(t: Transaction) {
+  const v = vouchers.value.find((x) => x.id === t.voucher_id)
+  if (!v) return ElMessage.info('未找到对应的团购券')
+  redeemTarget.value = v
+  redeemEditTxnId.value = t.id
+  redeemEditOldQty.value = t.trade_qty ? Number(t.trade_qty) : 1
+  redeemForm.quantity = redeemEditOldQty.value
+  redeemForm.category_id = t.category_id ?? v.category_id ?? null
+  redeemForm.occurred_at = fmtDate(t.occurred_at)
+  redeemForm.remark = (t.remark || '').startsWith('核销：') ? '' : (t.remark || '')
+  redeemForm.topup = 0
+  redeemForm.topup_account_id = fundingAccounts.value[0]?.id ?? null
+  // 补差价记在资金账户，需从全量流水按 split_group 找到兄弟记录回填
+  if (t.split_group) {
+    const lid = ledgerStore.currentId
+    if (lid) {
+      const all = await api.listTransactions(lid, { page_size: 1000 })
+      const sib = all.items.find((x) => x.split_group === t.split_group && x.id !== t.id)
+      if (sib) {
+        redeemForm.topup = toNum(sib.amount)
+        redeemForm.topup_account_id = sib.account_id
+      }
+    }
+  }
+  redeemDialog.value = true
+}
+
 async function submitRedeem() {
   const lid = ledgerStore.currentId
   if (!lid || !redeemTarget.value) return
   const k = Number(redeemForm.quantity)
   if (!k || k <= 0) return ElMessage.warning('请输入核销张数')
-  if (k > redeemTarget.value.remaining) return ElMessage.warning('核销张数超过剩余')
+  if (k > redeemMax.value) return ElMessage.warning('核销张数超过剩余')
   savingRedeem.value = true
   try {
     await api.voucherRedeem(lid, redeemTarget.value.id, {
@@ -236,9 +317,10 @@ async function submitRedeem() {
       topup: redeemForm.topup ? Number(redeemForm.topup).toFixed(2) : '0',
       topup_account_id: redeemForm.topup && Number(redeemForm.topup) > 0 ? redeemForm.topup_account_id ?? undefined : undefined,
       occurred_at: redeemForm.occurred_at || undefined,
-      remark: redeemForm.remark || undefined
+      remark: redeemForm.remark || undefined,
+      edit_txn_id: redeemEditTxnId.value ?? undefined
     })
-    ElMessage.success('核销成功')
+    ElMessage.success(redeemEditTxnId.value ? '已修改核销' : '核销成功')
     redeemDialog.value = false
     voucherStore.markSaved()
     await load()
@@ -247,7 +329,14 @@ async function submitRedeem() {
   }
 }
 
-// ---------------- 退货 ----------------
+// ---------------- 退货（新增 confirm / 修改 dialog） ----------------
+const refundDialog = ref(false)
+const savingRefund = ref(false)
+const refundTarget = ref<Voucher | null>(null)
+const refundEditTxnId = ref<number | null>(null)
+const refundAmount = ref(0)
+const refundForm = reactive<{ occurred_at: string; remark: string }>({ occurred_at: '', remark: '' })
+
 async function onRefund(v: Voucher) {
   const lid = ledgerStore.currentId
   if (!lid) return
@@ -263,6 +352,40 @@ async function onRefund(v: Voucher) {
   voucherStore.markSaved()
   await load()
 }
+
+function openRefundEdit(t: Transaction) {
+  const v = vouchers.value.find((x) => x.id === t.voucher_id)
+  if (!v) return ElMessage.info('未找到对应的团购券')
+  refundTarget.value = v
+  refundEditTxnId.value = t.id
+  refundAmount.value = toNum(t.amount)
+  refundForm.occurred_at = fmtDate(t.occurred_at)
+  refundForm.remark = (t.remark || '').startsWith('退券：') ? '' : (t.remark || '')
+  refundDialog.value = true
+}
+
+async function submitRefundEdit() {
+  const lid = ledgerStore.currentId
+  if (!lid || !refundTarget.value) return
+  savingRefund.value = true
+  try {
+    await api.voucherRefund(lid, refundTarget.value.id, {
+      occurred_at: refundForm.occurred_at || undefined,
+      remark: refundForm.remark || undefined,
+      edit_txn_id: refundEditTxnId.value ?? undefined
+    })
+    ElMessage.success('已修改退货')
+    refundDialog.value = false
+    voucherStore.markSaved()
+    await load()
+  } finally {
+    savingRefund.value = false
+  }
+}
+
+const refundTargetName = computed(() =>
+  accounts.value.find((a) => a.id === refundTarget.value?.source_account_id)?.name || '原购买账户'
+)
 
 async function onDeleteVoucher(v: Voucher) {
   await ElMessageBox.confirm(
@@ -387,8 +510,9 @@ watch(selectedAccountId, async () => {
             <el-table-column label="备注" min-width="180">
               <template #default="{ row }">{{ row.remark }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right" align="center">
+            <el-table-column label="操作" width="130" fixed="right" align="center">
               <template #default="{ row }">
+                <el-button v-if="txnEditKind(row)" link type="primary" size="small" @click="onEditTxn(row)">修改</el-button>
                 <el-button link type="danger" size="small" @click="onDeleteTxn(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -398,50 +522,76 @@ watch(selectedAccountId, async () => {
       </el-tabs>
     </div>
 
-    <!-- 购券弹窗 -->
-    <el-dialog v-model="buyDialog" title="购券" width="90%" style="max-width:480px" :close-on-click-modal="false">
+    <!-- 购券 / 修改购券（横板） -->
+    <el-dialog v-model="buyDialog" :title="buyTitle" width="92%" style="max-width:760px" :close-on-click-modal="false">
+      <el-alert v-if="buyEditTxnId" type="warning" :closable="false" show-icon
+                title="修改购券会按新内容重建该券，原有的核销 / 退货记录将被清除。" style="margin-bottom:12px" />
       <el-form label-width="92px">
-        <el-form-item label="团购券账户">
-          <el-select v-model="selectedAccountId" style="width:100%">
-            <el-option v-for="a in voucherAccounts" :key="a.id" :label="a.name" :value="a.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="商品名称" required>
-          <el-input v-model="buyForm.product" placeholder="如：XX火锅双人套餐" />
-        </el-form-item>
-        <el-form-item label="购买张数" required>
-          <el-input-number v-model="buyForm.quantity" :min="1" :precision="0" :controls="false" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="面值/张">
-          <el-input-number v-model="buyForm.face_value" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="实际价值，选填" />
-        </el-form-item>
-        <el-form-item label="实付/张" required>
-          <el-input-number v-model="buyForm.unit_price" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="优惠后单价" />
-        </el-form-item>
-        <el-form-item label="资金账户">
-          <el-select v-model="buyForm.source_account_id" clearable placeholder="支付账户（= 退货退款目标）" style="width:100%">
-            <el-option v-for="a in fundingAccounts" :key="a.id" :label="a.name" :value="a.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="购买日">
-          <el-date-picker v-model="buyForm.purchased_at" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="有效期至">
-          <el-date-picker v-model="buyForm.expiry_at" type="date" value-format="YYYY-MM-DD" style="width:100%" placeholder="到期未用可退货" />
-        </el-form-item>
-        <el-form-item label="核销分类">
-          <el-select v-model="buyForm.category_id" clearable placeholder="默认核销时记入的支出分类" style="width:100%">
-            <el-option v-for="c in expenseCategories" :key="c.id" :label="c.name" :value="c.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="buyForm.tag_ids" multiple clearable placeholder="选填" style="width:100%">
-            <el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="buyForm.remark" placeholder="选填" />
-        </el-form-item>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="团购券账户">
+              <el-select v-model="selectedAccountId" style="width:100%">
+                <el-option v-for="a in voucherAccounts" :key="a.id" :label="a.name" :value="a.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="商品名称" required>
+              <el-input v-model="buyForm.product" placeholder="如：XX火锅双人套餐" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="购买张数" required>
+              <el-input-number v-model="buyForm.quantity" :min="1" :precision="0" :controls="false" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="资金账户">
+              <el-select v-model="buyForm.source_account_id" clearable placeholder="支付账户（= 退货退款目标）" style="width:100%">
+                <el-option v-for="a in fundingAccounts" :key="a.id" :label="a.name" :value="a.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="面值/张">
+              <el-input-number v-model="buyForm.face_value" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="实际价值，选填" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="实付/张" required>
+              <el-input-number v-model="buyForm.unit_price" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="优惠后单价" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="购买日">
+              <el-date-picker v-model="buyForm.purchased_at" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="有效期至">
+              <el-date-picker v-model="buyForm.expiry_at" type="date" value-format="YYYY-MM-DD" style="width:100%" placeholder="到期未用可退货" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="核销分类">
+              <el-select v-model="buyForm.category_id" clearable placeholder="默认核销时记入的支出分类" style="width:100%">
+                <el-option v-for="c in expenseCategories" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="标签">
+              <el-select v-model="buyForm.tag_ids" multiple clearable placeholder="选填" style="width:100%">
+                <el-option v-for="t in tags" :key="t.id" :label="t.name" :value="t.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注">
+              <el-input v-model="buyForm.remark" placeholder="选填" />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <el-button @click="buyDialog = false">取消</el-button>
@@ -449,38 +599,86 @@ watch(selectedAccountId, async () => {
       </template>
     </el-dialog>
 
-    <!-- 核销弹窗 -->
-    <el-dialog v-model="redeemDialog" title="核销" width="90%" style="max-width:460px" :close-on-click-modal="false">
+    <!-- 核销 / 修改核销（横板） -->
+    <el-dialog v-model="redeemDialog" :title="redeemTitle" width="92%" style="max-width:680px" :close-on-click-modal="false">
       <el-form v-if="redeemTarget" label-width="92px">
-        <el-form-item label="商品">
-          <span>{{ redeemTarget.product }}（剩余 {{ redeemTarget.remaining }} 张 · 实付 {{ fmt(redeemTarget.unit_price) }}/张）</span>
-        </el-form-item>
-        <el-form-item label="核销张数" required>
-          <el-input-number v-model="redeemForm.quantity" :min="1" :max="redeemTarget.remaining" :precision="0" :controls="false" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="支出分类">
-          <el-select v-model="redeemForm.category_id" clearable placeholder="本次消费记入的分类" style="width:100%">
-            <el-option v-for="c in expenseCategories" :key="c.id" :label="c.name" :value="c.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="补差价">
-          <el-input-number v-model="redeemForm.topup" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="消费超出券值时额外支付" />
-        </el-form-item>
-        <el-form-item v-if="redeemForm.topup && Number(redeemForm.topup) > 0" label="补差账户">
-          <el-select v-model="redeemForm.topup_account_id" placeholder="补差价的支付账户" style="width:100%">
-            <el-option v-for="a in fundingAccounts" :key="a.id" :label="a.name" :value="a.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="日期">
-          <el-date-picker v-model="redeemForm.occurred_at" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="redeemForm.remark" placeholder="选填" />
-        </el-form-item>
+        <el-row :gutter="20">
+          <el-col :span="24">
+            <el-form-item label="商品">
+              <span>{{ redeemTarget.product }}（可核销 {{ redeemMax }} 张 · 实付 {{ fmt(redeemTarget.unit_price) }}/张）</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="核销张数" required>
+              <el-input-number v-model="redeemForm.quantity" :min="1" :max="redeemMax" :precision="0" :controls="false" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="支出分类">
+              <el-select v-model="redeemForm.category_id" clearable placeholder="本次消费记入的分类" style="width:100%">
+                <el-option v-for="c in expenseCategories" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="补差价">
+              <el-input-number v-model="redeemForm.topup" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="消费超出券值时额外支付" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item v-if="redeemForm.topup && Number(redeemForm.topup) > 0" label="补差账户">
+              <el-select v-model="redeemForm.topup_account_id" placeholder="补差价的支付账户" style="width:100%">
+                <el-option v-for="a in fundingAccounts" :key="a.id" :label="a.name" :value="a.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="日期">
+              <el-date-picker v-model="redeemForm.occurred_at" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="备注">
+              <el-input v-model="redeemForm.remark" placeholder="选填" />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <el-button @click="redeemDialog = false">取消</el-button>
         <el-button type="primary" :loading="savingRedeem" @click="submitRedeem">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 修改退货（横板） -->
+    <el-dialog v-model="refundDialog" title="修改退货" width="92%" style="max-width:600px" :close-on-click-modal="false">
+      <el-form v-if="refundTarget" label-width="92px">
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="商品">
+              <span>{{ refundTarget.product }}</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="退款金额">
+              <span>{{ fmt(refundAmount) }} → {{ refundTargetName }}</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="退货日期">
+              <el-date-picker v-model="refundForm.occurred_at" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="备注">
+              <el-input v-model="refundForm.remark" placeholder="选填" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button @click="refundDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingRefund" @click="submitRefundEdit">确定</el-button>
       </template>
     </el-dialog>
   </div>
