@@ -191,6 +191,8 @@ def voucher_redeem(
         raise HTTPException(404, "团购券不存在")
     if voucher.status == "refunded":
         raise HTTPException(400, "该券已退货，无法核销")
+    if voucher.expiry_at and voucher.status == "active" and voucher.expiry_at < datetime.now():
+        raise HTTPException(400, "该券已过期，无法核销，请改为退货")
     remaining = (voucher.quantity or 0) - (voucher.redeemed or 0)
     k = payload.quantity
     if k <= 0:

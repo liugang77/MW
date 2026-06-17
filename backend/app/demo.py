@@ -196,6 +196,8 @@ def _build_home_ledger(ledger_id: int, cats: dict, instruments: dict) -> None:
         credit = models.Account(ledger_id=ledger_id, name="招商信用卡", type="credit", icon="💳", group_id=g_credit.id,
                                 bank_name="招商银行", credit_limit=Decimal("50000"), bill_day=5, repay_day=25,
                                 initial_balance=Decimal("0"), current_balance=Decimal("0"), sort_order=5)
+        voucher_acc = models.Account(ledger_id=ledger_id, name="美团团购券", type="voucher", icon="🎫", group_id=g_cash.id,
+                                     initial_balance=Decimal("0"), current_balance=Decimal("0"), sort_order=16)
         stock = models.Account(ledger_id=ledger_id, name="证券账户", type="stock", icon="📈", group_id=g_invest.id,
                                initial_balance=Decimal("0"), current_balance=Decimal("0"), sort_order=6)
         fund_acc = models.Account(ledger_id=ledger_id, name="基金账户", type="open_fund", icon="📊", group_id=g_invest.id,
@@ -237,7 +239,7 @@ def _build_home_ledger(ledger_id: int, cats: dict, instruments: dict) -> None:
         major_car = models.Account(ledger_id=ledger_id, name="家用汽车", type="major_asset", icon="🚗",
                                    asset_nature="own", initial_balance=Decimal("0"), current_balance=Decimal("0"),
                                    remark="代步车", sort_order=15)
-        db.add_all([cash, wechat, alipay, salary, saving, credit, stock, fund_acc, wealth_acc, metal_acc, forex_acc, social, social2, social3, p2p_acc, p2p_acc2, loan_house, loan_consume, loan_lend, major_house, major_car])
+        db.add_all([cash, wechat, alipay, salary, saving, credit, voucher_acc, stock, fund_acc, wealth_acc, metal_acc, forex_acc, social, social2, social3, p2p_acc, p2p_acc2, loan_house, loan_consume, loan_lend, major_house, major_car])
         db.flush()
 
         # 人员与机构
@@ -624,6 +626,76 @@ def _build_home_ledger(ledger_id: int, cats: dict, instruments: dict) -> None:
         db.add(models.LoanRateAdjustment(ledger_id=ledger_id, loan_id=loan_consume_obj.id,
                                          occurred_at=_months_ago(12, 8, clamp_past=True),
                                          interest_rate=Decimal("6.5000"), remark="初始利率"))
+
+        # 团购券：覆盖 有效未核销 / 部分核销 / 核销补差价 / 已用完 / 已退货 / 过期待退货 等全部状态
+        def add_voucher(product, quantity, unit_price, face_value, source_acc, purchased,
+                        expiry, category_name=None, redeem_qty=0, topup=Decimal("0"),
+                        topup_acc=None, redeem_at=None, refund=False, refund_at=None, remark=None):
+            cat_id = c("expense", category_name) if category_name else None
+            up = Decimal(str(unit_price))
+            v = models.Voucher(
+                ledger_id=ledger_id, account_id=voucher_acc.id, product=product,
+                quantity=quantity, redeemed=0, unit_price=up, face_value=Decimal(str(face_value)),
+                source_account_id=source_acc.id, purchased_at=purchased, expiry_at=expiry,
+                category_id=cat_id, status="active", remark=remark,
+            )
+            db.add(v)
+            db.flush()
+            # 购券：资金账户 → 团购券账户（预付资产，不计收支）
+            add_txn(type="transfer", amount=(up * quantity).quantize(Decimal("0.01")),
+                    account_id=source_acc.id, to_account_id=voucher_acc.id,
+                    occurred_at=purchased, remark=f"购券：{product} {quantity}张", voucher_id=v.id)
+            # 核销：按实付价确认支出，可选补差价
+            if redeem_qty > 0:
+                group = uuid4().hex[:24] if (topup > 0 and topup_acc) else None
+                add_txn(type="expense", amount=(up * redeem_qty).quantize(Decimal("0.01")),
+                        account_id=voucher_acc.id, category_id=cat_id,
+                        occurred_at=redeem_at or purchased,
+                        remark=f"核销：{product} {redeem_qty}张",
+                        voucher_id=v.id, split_group=group, trade_qty=Decimal(redeem_qty))
+                if topup > 0 and topup_acc:
+                    add_txn(type="expense", amount=Decimal(str(topup)),
+                            account_id=topup_acc.id, category_id=cat_id,
+                            occurred_at=redeem_at or purchased,
+                            remark=f"核销补差价：{product}", voucher_id=v.id, split_group=group)
+                v.redeemed = redeem_qty
+                if v.redeemed >= v.quantity:
+                    v.status = "used"
+            # 退货：剩余券本金退回原购买账户
+            if refund:
+                remaining = v.quantity - v.redeemed
+                if remaining > 0:
+                    add_txn(type="transfer", amount=(up * remaining).quantize(Decimal("0.01")),
+                            account_id=voucher_acc.id, to_account_id=source_acc.id,
+                            occurred_at=refund_at or expiry,
+                            remark=f"退券：{product} {remaining}张", voucher_id=v.id)
+                    v.status = "refunded"
+            db.flush()
+            return v
+
+        # 1) 有效未核销：星巴克电子券（面值35/实付28，每张优惠7）
+        add_voucher("星巴克中杯券", 5, 28, 35, cash, _months_ago(2, 5),
+                    _months_ago(-6, 28, clamp_past=False), category_name="餐饮", remark="电商促销囤券")
+        # 2) 部分核销：海底捞双人套餐券（核销1张，剩2张）
+        add_voucher("海底捞双人套餐券", 3, 238, 298, saving, _months_ago(1, 10),
+                    _months_ago(-3, 28, clamp_past=False), category_name="餐饮",
+                    redeem_qty=1, redeem_at=_months_ago(0, 20), remark="朋友聚餐")
+        # 3) 部分核销 + 补差价：万达电影票券（核销2张，IMAX 补差价30）
+        add_voucher("万达电影票券", 4, 45, 60, salary, _months_ago(1, 2),
+                    _months_ago(-2, 28, clamp_past=False), category_name="娱乐",
+                    redeem_qty=2, topup=Decimal("30"), topup_acc=salary,
+                    redeem_at=_months_ago(0, 15), remark="周末观影")
+        # 4) 已用完：洗车服务券（2张全部核销）
+        add_voucher("洗车服务券", 2, 40, 50, wechat, _months_ago(3, 8),
+                    _months_ago(-1, 28, clamp_past=False), category_name="交通",
+                    redeem_qty=2, redeem_at=_months_ago(1, 10), remark="爱车保养")
+        # 5) 已退货：健身月卡体验券（到期未用，本金退回原购买账户）
+        add_voucher("健身月卡体验券", 1, 99, 199, saving, _months_ago(4, 3),
+                    _months_ago(2, 3), category_name="医疗",
+                    refund=True, refund_at=_months_ago(1, 20), remark="没时间去，已退款")
+        # 6) 过期待退货：自助餐双人券（有效期已过但尚未退货）
+        add_voucher("自助餐双人券", 2, 108, 128, cash, _months_ago(5, 6),
+                    _months_ago(1, 15), category_name="餐饮", remark="忘记使用，已过期")
 
         # 计划与提醒
         db.add_all([

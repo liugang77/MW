@@ -210,6 +210,7 @@ const redeemForm = reactive<{
 }>({ quantity: 1, category_id: null, topup: 0, topup_account_id: null, occurred_at: '', remark: '' })
 
 function openRedeem(v: Voucher) {
+  if (v.is_expired) return ElMessage.info('该券已过期，只能退货')
   if (v.remaining <= 0) return ElMessage.info('该券没有可核销的剩余张数')
   redeemTarget.value = v
   redeemForm.quantity = 1
@@ -360,7 +361,7 @@ watch(selectedAccountId, async () => {
             </el-table-column>
             <el-table-column label="操作" width="190" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.status === 'active'" link type="primary" size="small" @click="openRedeem(row)">核销</el-button>
+                <el-button v-if="row.status === 'active' && !row.is_expired" link type="primary" size="small" @click="openRedeem(row)">核销</el-button>
                 <el-button v-if="row.status === 'active' && row.remaining > 0" link type="warning" size="small" @click="onRefund(row)">退货</el-button>
                 <el-button link type="danger" size="small" @click="onDeleteVoucher(row)">删除</el-button>
               </template>
