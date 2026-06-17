@@ -1083,7 +1083,7 @@ watch(() => majorAssetStore.savedAt, load)
       </el-form>
 
       <!-- 普通账户表单 -->
-      <el-form v-else label-width="80px">
+      <el-form v-else label-width="92px">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="类型">
           <el-select v-model="form.type" style="width:100%" filterable>
