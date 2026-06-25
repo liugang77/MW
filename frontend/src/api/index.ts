@@ -18,6 +18,9 @@ export const api = {
   createLedger: (data: Partial<Ledger>) => post<Ledger>('/ledgers', data),
   updateLedger: (id: number, data: Partial<Ledger>) => put<Ledger>(`/ledgers/${id}`, data),
   deleteLedger: (id: number) => del<{ detail: string; next_ledger_id: number }>(`/ledgers/${id}`),
+  exportLedger: (lid: number) => get<Record<string, unknown>>(`/ledgers/${lid}/export`),
+  importLedger: (data: unknown) =>
+    post<{ detail: string; ledger_id: number; ledger_name: string }>(`/ledgers/import`, data),
 
   // 账户
   listAccounts: (lid: number) => get<Account[]>(`/ledgers/${lid}/accounts`),

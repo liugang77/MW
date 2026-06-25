@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.db import Base, engine, SessionLocal, init_common_db
-from app.api import ledgers, accounts, categories, transactions, stats, budgets, holdings, loans, trades, instruments, currencies, plans, market, vouchers
+from app.api import ledgers, accounts, categories, transactions, stats, budgets, holdings, loans, trades, instruments, currencies, plans, market, vouchers, ledger_io
 from app.seed import seed
 
 # 建表：通用库（common.db）的通用表；每个账本文件的表在首次访问时按需创建
@@ -164,7 +164,7 @@ app.add_middleware(
 )
 
 # 注册 API 路由
-for module in (ledgers, accounts, categories, transactions, stats, budgets, holdings, loans, trades, instruments, currencies, plans, market, vouchers):
+for module in (ledgers, accounts, categories, transactions, stats, budgets, holdings, loans, trades, instruments, currencies, plans, market, vouchers, ledger_io):
     app.include_router(module.router, prefix=settings.api_prefix)
 
 

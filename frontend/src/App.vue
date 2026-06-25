@@ -345,6 +345,8 @@ function onBrandCommand(cmd: string) {
   if (cmd === 'ledger-new') return openNewLedger()
   if (cmd === 'ledger-open') return openLedgerPicker()
   if (cmd === 'ledger-delete') return deleteCurrentLedger()
+  if (cmd === 'ledger-export') return exportLedger()
+  if (cmd === 'ledger-import') return triggerImportLedger()
   if (cmd === 'plan-remind') return planStore.open()
   ElMessage.info('该功能开发中')
 }
@@ -396,6 +398,66 @@ async function deleteCurrentLedger() {
   await ledgerStore.load()
   ledgerStore.setCurrent(res.next_ledger_id)
   ElMessage.success('账簿已删除')
+}
+
+// 导出账簿数据：拉取全部数据并下载为 JSON 文件
+async function exportLedger() {
+  const cur = ledgerStore.current
+  if (!cur) return ElMessage.warning('没有可导出的账簿')
+  try {
+    const data = await api.exportLedger(cur.id)
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    a.href = url
+    a.download = `${cur.name}-${stamp}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('账簿数据已导出')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '导出失败')
+  }
+}
+
+// 导入账簿数据：选择 JSON 文件 → 确认 → 清除对应账本后完整导入
+const importInput = ref<HTMLInputElement | null>(null)
+function triggerImportLedger() {
+  importInput.value?.click()
+}
+async function onImportFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许重复选择同一文件
+  if (!file) return
+  let data: Record<string, unknown>
+  try {
+    data = JSON.parse(await file.text())
+  } catch {
+    return ElMessage.error('文件解析失败，请选择有效的账本导出 JSON 文件')
+  }
+  if ((data as { format?: string }).format !== 'mw-ledger') {
+    return ElMessage.error('文件格式不正确，不是有效的账本导出文件')
+  }
+  const name = (data.ledger as { name?: string } | undefined)?.name || '该账本'
+  try {
+    await ElMessageBox.confirm(
+      `导入将清除「${name}」原有数据并完整恢复为文件中的内容，且不可撤销。确定继续吗？`,
+      '导入账簿数据',
+      { type: 'warning', confirmButtonText: '导入', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await api.importLedger(data)
+    await ledgerStore.load()
+    ledgerStore.setCurrent(res.ledger_id)
+    await loadAccounts()
+    ElMessage.success('账簿数据已导入')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '导入失败')
+  }
 }
 
 onMounted(async () => {
@@ -583,6 +645,8 @@ watch(() => voucherStore.savedAt, loadAccounts)
     <ForexTrade />
     <SalaryDialog />
     <IpoConfirm />
+    <!-- 隐藏的账簿数据导入文件选择器 -->
+    <input ref="importInput" type="file" accept="application/json,.json" style="display:none" @change="onImportFileChange" />
 
     <!-- 新建账簿 -->
     <el-dialog v-model="newLedgerVisible" title="新建账簿" width="400px">
