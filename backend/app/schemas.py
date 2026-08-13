@@ -277,6 +277,7 @@ class TransactionOut(TransactionBase):
     trade_exchange_rate: Decimal | None = None
     loan_id: int | None = None
     collect_group: str | None = None
+    voucher_id: int | None = None
     ipo_status: str | None = None
     tag_ids: list[int] = []
     split_group: str | None = None
@@ -758,6 +759,65 @@ class LoanScheduleOut(BaseModel):
     remaining_principal: Decimal
     remaining_interest: Decimal
     items: list[LoanScheduleItem]
+
+
+# ---------- Voucher（团购券） ----------
+class VoucherBuy(BaseModel):
+    """购券：从资金账户买入若干张团购券（预付资产，不计收支）。"""
+    account_id: int                        # 团购券账户
+    product: str                           # 商品名称
+    quantity: int = 1                      # 购买张数
+    unit_price: Decimal                    # 单张实付价（优惠后成本）
+    face_value: Decimal | None = None      # 单张面值（实际价值），默认同实付价
+    source_account_id: int | None = None   # 购买资金账户（= 退货退款目标）
+    purchased_at: datetime | None = None
+    expiry_at: datetime | None = None      # 有效期截止
+    category_id: int | None = None         # 默认核销支出分类
+    remark: str | None = None
+    tag_ids: list[int] = []
+    edit_txn_id: int | None = None         # 编辑模式：先回滚并删除原购券（整券）后重建
+
+
+class VoucherRedeem(BaseModel):
+    """核销：消费若干张券，确认为支出；如消费超出券值可补差价。"""
+    quantity: int = 1                      # 本次核销张数
+    category_id: int | None = None         # 支出分类
+    topup: Decimal = Decimal("0")          # 额外补差价金额
+    topup_account_id: int | None = None    # 补差价资金账户
+    occurred_at: datetime | None = None
+    remark: str | None = None
+    tag_ids: list[int] = []
+    edit_txn_id: int | None = None         # 编辑模式：先回滚原核销（恢复已核销张数）后重建
+
+
+class VoucherRefund(BaseModel):
+    """退货：到期未用，剩余券本金退回原购买账户。"""
+    occurred_at: datetime | None = None
+    remark: str | None = None
+    edit_txn_id: int | None = None         # 编辑模式：先回滚原退货（状态恢复）后重建
+
+
+class VoucherOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ledger_id: int
+    account_id: int
+    product: str
+    quantity: int
+    redeemed: int
+    unit_price: Decimal
+    face_value: Decimal
+    source_account_id: int | None = None
+    purchased_at: datetime
+    expiry_at: datetime | None = None
+    category_id: int | None = None
+    status: str
+    remark: str | None = None
+    # 派生字段
+    remaining: int = 0                     # 剩余张数
+    occupied_value: Decimal = Decimal("0") # 剩余券占用价值（剩余张数 × 实付单价）
+    discount: Decimal = Decimal("0")       # 已优惠金额（(面值 − 实付) × 张数）
+    is_expired: bool = False               # 是否已过期（仍 active 但超过有效期）
 
 
 # ---------- Instrument（金融产品资料）----------
